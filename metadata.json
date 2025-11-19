@@ -1,0 +1,7 @@
+{
+  "name": "Google Companion",
+  "description": "A 3D Avatar companion powered by Gemini Live API with search grounding.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
