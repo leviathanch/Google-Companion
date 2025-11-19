@@ -9,7 +9,7 @@ import { useGeminiLive } from './hooks/useGeminiLive';
 import { ConnectionState } from './types';
 
 const App = () => {
-  const { connect, disconnect, connectionState, isSpeaking, volume, groundingMetadata } = useGeminiLive();
+  const { connect, disconnect, connectionState, isSpeaking, volume, groundingMetadata, audioAnalyser } = useGeminiLive();
   const [showSources, setShowSources] = useState(false);
 
   // Auto-show sources when new metadata arrives
@@ -53,7 +53,7 @@ const App = () => {
       <div className="absolute inset-0 bg-gradient-to-b from-[#13131f] to-[#050508]" />
       
       {/* 3D Scene */}
-      <Canvas camera={{ position: [0, 1.4, 3.5], fov: 28 }}>
+      <Canvas camera={{ position: [0, 1.4, 3.5], fov: 28 }} shadows={false}>
         {/* Dark Fog for seamless blending */}
         {/* @ts-ignore */}
         <fog attach="fog" args={['#0a0a12', 5, 12]} />
@@ -64,12 +64,12 @@ const App = () => {
            2. AmbientLight: Base brightness filler
         */}
         {/* @ts-ignore */}
-        <hemisphereLight args={['#fff0f0', '#f0f0ff', 0.1]} />
+        <hemisphereLight args={['#fff0f0', '#f0f0ff', 0.2]} />
         {/* @ts-ignore */}
-        <ambientLight intensity={0.15} />
+        <ambientLight intensity={0.3} />
         
         <Suspense fallback={<Loader />}>
-           <Avatar3D isSpeaking={isSpeaking} />
+           <Avatar3D isSpeaking={isSpeaking} audioAnalyser={audioAnalyser} />
         </Suspense>
         
         <OrbitControls 

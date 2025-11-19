@@ -5,12 +5,13 @@ import * as THREE from 'three';
 
 interface Avatar3DProps {
   isSpeaking: boolean;
+  audioAnalyser: AnalyserNode | null;
 }
 
 // Utility to bypass CORS for Google Drive direct links
 const getCorsUrl = (url: string) => `https://corsproxy.io/?${encodeURIComponent(url)}`;
 
-export const Avatar3D: React.FC<Avatar3DProps> = ({ isSpeaking }) => {
+export const Avatar3D: React.FC<Avatar3DProps> = ({ isSpeaking, audioAnalyser }) => {
   // Original Google Drive Links
   const MODEL_ORIGIN = "https://drive.google.com/uc?export=download&id=11bPt43uqy-SjzGEP75ml_4MLObhy26cT";
   const IDLE_ORIGIN = "https://drive.google.com/uc?export=download&id=1rMbZFQHtwQoG02ELbig1OJkeO5-MnEmU";
@@ -40,7 +41,7 @@ export const Avatar3D: React.FC<Avatar3DProps> = ({ isSpeaking }) => {
   const { actions } = useAnimations(animations, group);
 
   // Create a flat gradient texture for the toon effect
-  // UPDATED: Darkened to [5, 5, 5] as per user preference
+  // [5, 5, 5] gives a dark flat look that is balanced by ambient light
   const gradientTexture = useMemo(() => {
     const format = THREE.RedFormat;
     const colors = new Uint8Array([5, 5, 5]); 
@@ -50,6 +51,68 @@ export const Avatar3D: React.FC<Avatar3DProps> = ({ isSpeaking }) => {
     texture.needsUpdate = true;
     return texture;
   }, []);
+
+  // --- Lip Sync Logic ---
+  const mouthMeshRef = useRef<THREE.Mesh | null>(null);
+  const morphTargetIndexRef = useRef<number | null>(null);
+
+  // Find the head mesh with blendshapes on load
+  useEffect(() => {
+    if (!model) return;
+    
+    // Common names for mouth open morph target in Vroid/VRM/Mixamo/FBX
+    const lipSyncCandidates = [
+      'Fcl_MTH_A', 'Fcl_MTH_I', 'Fcl_MTH_U', 'Fcl_MTH_E', 'Fcl_MTH_O', // Vroid standard
+      'A', 'aa', 'a', 'I', 'i', 'U', 'u', // Simple vowels
+      'MouthOpen', 'mouth_a', 'v_aa', 'Mouth_Open' // Generic
+    ];
+
+    model.traverse((child) => {
+      if ((child as THREE.Mesh).isMesh && (child as THREE.Mesh).morphTargetDictionary) {
+        const mesh = child as THREE.Mesh;
+        // Check if this mesh has any of our candidate morphs
+        for (const name of lipSyncCandidates) {
+          if (mesh.morphTargetDictionary && mesh.morphTargetDictionary.hasOwnProperty(name)) {
+             mouthMeshRef.current = mesh;
+             morphTargetIndexRef.current = mesh.morphTargetDictionary[name];
+             console.log(`Lip Sync: Found target mesh "${mesh.name}" with morph "${name}" at index ${morphTargetIndexRef.current}`);
+             return; // Stop searching once found
+          }
+        }
+      }
+    });
+  }, [model]);
+
+  // Frame Loop for Lip Sync Animation
+  useFrame(() => {
+    if (mouthMeshRef.current && morphTargetIndexRef.current !== null && audioAnalyser) {
+      // Get audio data
+      const dataArray = new Uint8Array(audioAnalyser.frequencyBinCount);
+      audioAnalyser.getByteFrequencyData(dataArray);
+      
+      // Calculate energy (simple average of lower frequencies for speech)
+      const speechBins = dataArray.slice(0, dataArray.length / 2); // Focus on lower half
+      let sum = 0;
+      for (let i = 0; i < speechBins.length; i++) {
+        sum += speechBins[i];
+      }
+      const average = sum / speechBins.length;
+      
+      // Normalize 0-255 to 0-1
+      // Boost signal slightly (* 1.5) to make mouth open more easily
+      const targetOpenness = Math.min(1, (average / 100) * 1.5);
+      
+      // Smooth interpolation (LERP)
+      const currentOpenness = mouthMeshRef.current.morphTargetInfluences![morphTargetIndexRef.current];
+      const smoothed = THREE.MathUtils.lerp(currentOpenness, targetOpenness, 0.3); // 0.3 smoothing factor
+      
+      mouthMeshRef.current.morphTargetInfluences![morphTargetIndexRef.current] = smoothed;
+    } else if (mouthMeshRef.current && morphTargetIndexRef.current !== null && !isSpeaking) {
+       // Close mouth smoothly when not speaking
+       const currentOpenness = mouthMeshRef.current.morphTargetInfluences![morphTargetIndexRef.current];
+       mouthMeshRef.current.morphTargetInfluences![morphTargetIndexRef.current] = THREE.MathUtils.lerp(currentOpenness, 0, 0.2);
+    }
+  });
 
   // Handle Animation Switching
   useEffect(() => {
@@ -76,11 +139,8 @@ export const Avatar3D: React.FC<Avatar3DProps> = ({ isSpeaking }) => {
                 mesh.castShadow = false;
                 mesh.receiveShadow = false;
                 
-                // We replace the standard material with MeshToonMaterial
-                // preserving the original map (texture) and color
                 const oldMat = mesh.material as THREE.MeshStandardMaterial;
                 
-                // Handle cases where material might be an array (though rare for this type of model)
                 if (!Array.isArray(oldMat)) {
                     const toonMat = new THREE.MeshToonMaterial({
                         color: oldMat.color,
@@ -88,12 +148,10 @@ export const Avatar3D: React.FC<Avatar3DProps> = ({ isSpeaking }) => {
                         gradientMap: gradientTexture,
                         transparent: false,
                         side: THREE.FrontSide,
-                        // Important: Enable skinning for animated meshes
-                        // @ts-ignore - THREE types sometimes miss this for ToonMaterial but it exists
+                        // @ts-ignore
                         skinning: true 
                     });
                     
-                    // Ensure the texture encoding is correct if needed
                     if (toonMat.map) {
                         toonMat.map.colorSpace = THREE.SRGBColorSpace;
                     }

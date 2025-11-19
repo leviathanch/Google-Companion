@@ -10,6 +10,7 @@ export interface UseGeminiLiveReturn {
     isSpeaking: boolean;
     volume: number;
     groundingMetadata: GroundingMetadata | null;
+    audioAnalyser: AnalyserNode | null;
 }
 
 export const useGeminiLive = (): UseGeminiLiveReturn => {
@@ -24,6 +25,7 @@ export const useGeminiLive = (): UseGeminiLiveReturn => {
     const inputSourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
     const scriptProcessorRef = useRef<ScriptProcessorNode | null>(null);
     const activeSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
+    const audioAnalyserRef = useRef<AnalyserNode | null>(null);
     
     // Timing
     const nextStartTimeRef = useRef<number>(0);
@@ -63,6 +65,8 @@ export const useGeminiLive = (): UseGeminiLiveReturn => {
             outputAudioContextRef.current = null;
         }
         
+        audioAnalyserRef.current = null;
+        
         setIsSpeaking(false);
         setVolume(0);
         setGroundingMetadata(null);
@@ -82,8 +86,15 @@ export const useGeminiLive = (): UseGeminiLiveReturn => {
         try {
             // Initialize Audio Contexts
             inputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 16000 });
-            outputAudioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+            const outputCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 24000 });
+            outputAudioContextRef.current = outputCtx;
             
+            // Initialize Analyser
+            const analyser = outputCtx.createAnalyser();
+            analyser.fftSize = 256;
+            analyser.smoothingTimeConstant = 0.1;
+            audioAnalyserRef.current = analyser;
+
             // Initialize Gemini Client
             const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
             
@@ -152,7 +163,14 @@ export const useGeminiLive = (): UseGeminiLiveReturn => {
                             
                             const source = ctx.createBufferSource();
                             source.buffer = audioBuffer;
-                            source.connect(ctx.destination);
+                            
+                            // Connect through analyser for visualization/lipsync
+                            if (audioAnalyserRef.current) {
+                                source.connect(audioAnalyserRef.current);
+                                audioAnalyserRef.current.connect(ctx.destination);
+                            } else {
+                                source.connect(ctx.destination);
+                            }
                             
                             const now = ctx.currentTime;
                             const startTime = Math.max(now, nextStartTimeRef.current);
@@ -209,17 +227,33 @@ export const useGeminiLive = (): UseGeminiLiveReturn => {
         }
     }, [connectionState, disconnect]);
 
+    // Volume visualizer loop (UI only)
     useEffect(() => {
-        if (!isSpeaking) {
+        if (!isSpeaking || !audioAnalyserRef.current) {
             setVolume(0);
             return;
         }
-        
-        const interval = setInterval(() => {
-            setVolume(Math.random() * 0.5 + 0.5);
-        }, 100);
-        
-        return () => clearInterval(interval);
+
+        let animationFrameId: number;
+        const dataArray = new Uint8Array(audioAnalyserRef.current.frequencyBinCount);
+
+        const updateVolume = () => {
+            if (audioAnalyserRef.current) {
+                audioAnalyserRef.current.getByteFrequencyData(dataArray);
+                // Simple RMS approximation for volume
+                let sum = 0;
+                for (let i = 0; i < dataArray.length; i++) {
+                    sum += dataArray[i];
+                }
+                const average = sum / dataArray.length;
+                setVolume(Math.min(1, average / 128));
+            }
+            animationFrameId = requestAnimationFrame(updateVolume);
+        };
+
+        updateVolume();
+
+        return () => cancelAnimationFrame(animationFrameId);
     }, [isSpeaking]);
 
     return {
@@ -228,6 +262,7 @@ export const useGeminiLive = (): UseGeminiLiveReturn => {
         disconnect,
         isSpeaking,
         volume,
-        groundingMetadata
+        groundingMetadata,
+        audioAnalyser: audioAnalyserRef.current
     };
 };
