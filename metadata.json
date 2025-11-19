@@ -1,7 +1,8 @@
 {
-  "name": "Google Companion",
-  "description": "A 3D Avatar companion powered by Gemini Live API with search grounding.",
+  "name": "Gem Companion",
+  "description": "A 3D Avatar companion powered by Gemini Live API with search grounding and access to workspace. Gem Companion (because Google Companion apparently isn't allowed as a name according to GCP) learns about you over time (basically like Replika only that it took Gemini 3 exactly 3 seconds to implement with vibe coding)",
   "requestFramePermissions": [
-    "microphone"
+    "microphone",
+    "geolocation"
   ]
 }

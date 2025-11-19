@@ -1,3 +1,4 @@
+
 import React, { useEffect, useRef, useMemo } from 'react';
 import { useLoader, useFrame } from '@react-three/fiber';
 import { useAnimations, useFBX } from '@react-three/drei';
@@ -6,21 +7,20 @@ import * as THREE from 'three';
 interface Avatar3DProps {
   isSpeaking: boolean;
   audioAnalyser: AnalyserNode | null;
+  gesture: string | null;
 }
 
-// Utility to bypass CORS for Google Drive direct links
-const getCorsUrl = (url: string) => `https://corsproxy.io/?${encodeURIComponent(url)}`;
+export const Avatar3D: React.FC<Avatar3DProps> = ({ isSpeaking, audioAnalyser, gesture }) => {
+  // Helper to bypass CORS restrictions on the GCS bucket
+  // In production, you should configure CORS on the bucket itself: gsutil cors set ...
+  const getCorsUrl = (url: string) => `https://corsproxy.io/?${encodeURIComponent(url)}`;
 
-export const Avatar3D: React.FC<Avatar3DProps> = ({ isSpeaking, audioAnalyser }) => {
-  // Original Google Drive Links
-  const MODEL_ORIGIN = "https://drive.google.com/uc?export=download&id=11bPt43uqy-SjzGEP75ml_4MLObhy26cT";
-  const IDLE_ORIGIN = "https://drive.google.com/uc?export=download&id=1rMbZFQHtwQoG02ELbig1OJkeO5-MnEmU";
-  const TALK_ORIGIN = "https://drive.google.com/uc?export=download&id=16vmtArbDFnFKOL2ex0RqP6tkhndBvllC";
-
-  // Proxied URLs
-  const MODEL_URL = useMemo(() => getCorsUrl(MODEL_ORIGIN), []);
-  const IDLE_URL = useMemo(() => getCorsUrl(IDLE_ORIGIN), []);
-  const TALK_URL = useMemo(() => getCorsUrl(TALK_ORIGIN), []);
+  // Cloud Storage Assets (Wrapped in CORS Proxy)
+  const MODEL_URL = getCorsUrl("https://storage.googleapis.com/3d_model/GoogleChan.fbx");
+  const IDLE_URL = getCorsUrl("https://storage.googleapis.com/3d_model/animations/Idle.fbx");
+  const TALK_URL = getCorsUrl("https://storage.googleapis.com/3d_model/animations/Talking1.fbx");
+  const NOD_URL = getCorsUrl("https://storage.googleapis.com/3d_model/animations/HeadNod.fbx");
+  const SHAKE_URL = getCorsUrl("https://storage.googleapis.com/3d_model/animations/HeadShake.fbx");
 
   // Load Model
   const model = useFBX(MODEL_URL);
@@ -28,14 +28,23 @@ export const Avatar3D: React.FC<Avatar3DProps> = ({ isSpeaking, audioAnalyser })
   // Load Animations
   const idleFbx = useFBX(IDLE_URL);
   const talkFbx = useFBX(TALK_URL);
+  const nodFbx = useFBX(NOD_URL);
+  const shakeFbx = useFBX(SHAKE_URL);
 
   // Rename animations
   if (idleFbx.animations[0].name !== 'Idle') idleFbx.animations[0].name = 'Idle';
   if (talkFbx.animations[0].name !== 'Talking') talkFbx.animations[0].name = 'Talking';
+  if (nodFbx.animations[0]) nodFbx.animations[0].name = 'HeadNod';
+  if (shakeFbx.animations[0]) shakeFbx.animations[0].name = 'HeadShake';
 
   const animations = useMemo(() => {
-    return [...idleFbx.animations, ...talkFbx.animations];
-  }, [idleFbx, talkFbx]);
+    return [
+        ...idleFbx.animations, 
+        ...talkFbx.animations,
+        ...(nodFbx.animations[0] ? [nodFbx.animations[0]] : []),
+        ...(shakeFbx.animations[0] ? [shakeFbx.animations[0]] : [])
+    ];
+  }, [idleFbx, talkFbx, nodFbx, shakeFbx]);
 
   const group = useRef<THREE.Group>(null);
   const { actions } = useAnimations(animations, group);
@@ -172,12 +181,40 @@ export const Avatar3D: React.FC<Avatar3DProps> = ({ isSpeaking, audioAnalyser })
     }
   });
 
-  // Handle Animation Switching
+  // Handle Gestures (One-shot animations)
+  useEffect(() => {
+      if (!actions || !gesture) return;
+      
+      const action = actions[gesture];
+      if (action) {
+          // Reset and play the gesture once
+          action.reset().setLoop(THREE.LoopOnce, 1).fadeIn(0.2).play();
+          
+          // When finished, it will automatically blend back due to the main animation loop
+          // But we need to ensure the main loop (Idle/Talk) doesn't override it instantly.
+          // For simplicity in this setup, we let the gesture play on top (additive or override).
+          // To make it cleaner, we could pause idle, but mixing is usually fine for head nods.
+          
+          action.clampWhenFinished = true;
+          
+          // Cleanup: fade out after duration (approx 2s for typical gestures)
+          const timeout = setTimeout(() => {
+              action.fadeOut(0.5);
+          }, 2000);
+          
+          return () => clearTimeout(timeout);
+      }
+  }, [gesture, actions]);
+
+  // Handle Main Animation Switching (Idle vs Talking)
   useEffect(() => {
     if (!actions) return;
 
     const idleAction = actions['Idle'];
     const talkAction = actions['Talking'];
+
+    // Only crossfade if we aren't in the middle of a strong gesture that needs full body control
+    // But for head nods, it's fine to layer.
 
     if (isSpeaking) {
       idleAction?.fadeOut(0.2);
