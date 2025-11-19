@@ -52,65 +52,123 @@ export const Avatar3D: React.FC<Avatar3DProps> = ({ isSpeaking, audioAnalyser })
     return texture;
   }, []);
 
-  // --- Lip Sync Logic ---
+  // --- Lip Sync & Blink Logic ---
   const mouthMeshRef = useRef<THREE.Mesh | null>(null);
   const morphTargetIndexRef = useRef<number | null>(null);
+
+  const blinkMeshRef = useRef<THREE.Mesh | null>(null);
+  const blinkMorphIndexRef = useRef<number | null>(null);
+  
+  // Blink State
+  const nextBlinkTime = useRef<number>(0);
+  const isBlinking = useRef<boolean>(false);
+  const blinkStartTime = useRef<number>(0);
+  const BLINK_DURATION = 0.15; // Seconds
 
   // Find the head mesh with blendshapes on load
   useEffect(() => {
     if (!model) return;
     
-    // Common names for mouth open morph target in Vroid/VRM/Mixamo/FBX
+    // Candidates for Lip Sync
     const lipSyncCandidates = [
       'Fcl_MTH_A', 'Fcl_MTH_I', 'Fcl_MTH_U', 'Fcl_MTH_E', 'Fcl_MTH_O', // Vroid standard
       'A', 'aa', 'a', 'I', 'i', 'U', 'u', // Simple vowels
       'MouthOpen', 'mouth_a', 'v_aa', 'Mouth_Open' // Generic
     ];
 
+    // Candidates for Blinking
+    const blinkCandidates = [
+        'Fcl_EYE_Close', 'Fcl_EYE_Close_R', 'Blink', 'blink', 'EYE_Close', 'Fcl_EYE_Joy'
+    ];
+
     model.traverse((child) => {
       if ((child as THREE.Mesh).isMesh && (child as THREE.Mesh).morphTargetDictionary) {
         const mesh = child as THREE.Mesh;
-        // Check if this mesh has any of our candidate morphs
-        for (const name of lipSyncCandidates) {
-          if (mesh.morphTargetDictionary && mesh.morphTargetDictionary.hasOwnProperty(name)) {
-             mouthMeshRef.current = mesh;
-             morphTargetIndexRef.current = mesh.morphTargetDictionary[name];
-             console.log(`Lip Sync: Found target mesh "${mesh.name}" with morph "${name}" at index ${morphTargetIndexRef.current}`);
-             return; // Stop searching once found
-          }
+        
+        // 1. Find Mouth
+        if (!mouthMeshRef.current) {
+            for (const name of lipSyncCandidates) {
+                if (mesh.morphTargetDictionary?.hasOwnProperty(name)) {
+                    mouthMeshRef.current = mesh;
+                    morphTargetIndexRef.current = mesh.morphTargetDictionary[name];
+                    console.log(`Lip Sync: Found target mesh "${mesh.name}" with morph "${name}"`);
+                    break; 
+                }
+            }
+        }
+
+        // 2. Find Eyes (Blink) - Might be the same mesh as mouth
+        // We check separately in case they are different meshes or we haven't found one yet
+        if (!blinkMeshRef.current || (blinkMeshRef.current === mouthMeshRef.current)) {
+             for (const name of blinkCandidates) {
+                if (mesh.morphTargetDictionary?.hasOwnProperty(name)) {
+                    blinkMeshRef.current = mesh;
+                    blinkMorphIndexRef.current = mesh.morphTargetDictionary[name];
+                    console.log(`Blink: Found target mesh "${mesh.name}" with morph "${name}"`);
+                    break;
+                }
+            }
         }
       }
     });
   }, [model]);
 
-  // Frame Loop for Lip Sync Animation
-  useFrame(() => {
+  // Frame Loop for Animation (Lip Sync + Blink)
+  useFrame((state) => {
+    const now = state.clock.elapsedTime;
+
+    // --- Lip Sync ---
     if (mouthMeshRef.current && morphTargetIndexRef.current !== null && audioAnalyser) {
       // Get audio data
       const dataArray = new Uint8Array(audioAnalyser.frequencyBinCount);
       audioAnalyser.getByteFrequencyData(dataArray);
       
       // Calculate energy (simple average of lower frequencies for speech)
-      const speechBins = dataArray.slice(0, dataArray.length / 2); // Focus on lower half
+      const speechBins = dataArray.slice(0, dataArray.length / 2); 
       let sum = 0;
       for (let i = 0; i < speechBins.length; i++) {
         sum += speechBins[i];
       }
       const average = sum / speechBins.length;
       
-      // Normalize 0-255 to 0-1
-      // Boost signal slightly (* 1.5) to make mouth open more easily
+      // Boost signal slightly to make mouth open more easily
       const targetOpenness = Math.min(1, (average / 100) * 1.5);
       
       // Smooth interpolation (LERP)
       const currentOpenness = mouthMeshRef.current.morphTargetInfluences![morphTargetIndexRef.current];
-      const smoothed = THREE.MathUtils.lerp(currentOpenness, targetOpenness, 0.3); // 0.3 smoothing factor
+      const smoothed = THREE.MathUtils.lerp(currentOpenness, targetOpenness, 0.3); 
       
       mouthMeshRef.current.morphTargetInfluences![morphTargetIndexRef.current] = smoothed;
     } else if (mouthMeshRef.current && morphTargetIndexRef.current !== null && !isSpeaking) {
        // Close mouth smoothly when not speaking
        const currentOpenness = mouthMeshRef.current.morphTargetInfluences![morphTargetIndexRef.current];
        mouthMeshRef.current.morphTargetInfluences![morphTargetIndexRef.current] = THREE.MathUtils.lerp(currentOpenness, 0, 0.2);
+    }
+
+    // --- Blinking ---
+    if (blinkMeshRef.current && blinkMorphIndexRef.current !== null) {
+        // Trigger Blink
+        if (!isBlinking.current && now > nextBlinkTime.current) {
+            isBlinking.current = true;
+            blinkStartTime.current = now;
+            // Schedule next blink (2 to 6 seconds later)
+            nextBlinkTime.current = now + 2 + Math.random() * 4; 
+        }
+
+        // Animate Blink
+        if (isBlinking.current) {
+            const progress = (now - blinkStartTime.current) / BLINK_DURATION;
+            
+            if (progress >= 1) {
+                // Blink finished
+                isBlinking.current = false;
+                blinkMeshRef.current.morphTargetInfluences![blinkMorphIndexRef.current] = 0;
+            } else {
+                // Bell curve 0 -> 1 -> 0
+                const value = Math.sin(progress * Math.PI);
+                blinkMeshRef.current.morphTargetInfluences![blinkMorphIndexRef.current] = value;
+            }
+        }
     }
   });
 
