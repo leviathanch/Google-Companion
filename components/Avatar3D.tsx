@@ -1,6 +1,6 @@
 
 import React, { useEffect, useRef, useMemo } from 'react';
-import { useLoader, useFrame } from '@react-three/fiber';
+import { useFrame } from '@react-three/fiber';
 import { useAnimations, useFBX } from '@react-three/drei';
 import * as THREE from 'three';
 
@@ -10,47 +10,109 @@ interface Avatar3DProps {
   gesture: string | null;
 }
 
+// Euler-based Wiggle Bone Physics
+// calculates inertia in world space, converts to local space, applies to rotation
+class WiggleBone {
+    bone: THREE.Bone;
+    velocity: THREE.Vector2 = new THREE.Vector2(0, 0); // x = pitch (bounce), y = yaw (sway)
+    prevWorldPos: THREE.Vector3 = new THREE.Vector3();
+    
+    // Config
+    stiffness: number = 150.0;
+    damping: number = 4.0;
+    mass: number = 1.0;
+    gravity: number = 0; // Optional, usually baked into pose
+    
+    constructor(bone: THREE.Bone) {
+        this.bone = bone;
+        this.bone.getWorldPosition(this.prevWorldPos);
+    }
+    
+    update(dt: number) {
+        if (!this.bone.parent) return;
+
+        // 1. Calculate Bone's current World Position (if it were rigid)
+        const currentWorldPos = new THREE.Vector3();
+        this.bone.getWorldPosition(currentWorldPos);
+
+        // 2. Calculate Inertia Force (Movement delta)
+        const movement = currentWorldPos.clone().sub(this.prevWorldPos);
+        this.prevWorldPos.copy(currentWorldPos);
+        
+        // 3. Convert Movement to Local Space of the bone's parent (to know direction relative to body)
+        // We want the force relative to the bone's orientation? Or parent?
+        // Usually relative to the bone's rest orientation.
+        // Let's project movement vector onto the bone's Local X and Z axes equivalents.
+        
+        // Get rotation of parent to transform world vector to local
+        const parentInverseQuat = this.bone.parent.quaternion.clone().invert();
+        const parentWorldQuat = new THREE.Quaternion();
+        this.bone.parent.getWorldQuaternion(parentWorldQuat);
+        const invParentWorldQuat = parentWorldQuat.clone().invert();
+        
+        const localMovement = movement.clone().applyQuaternion(invParentWorldQuat);
+        
+        // Local Y is usually "Up" or "Along Bone". 
+        // Local X is Left/Right. 
+        // Local Z is Forward/Back.
+        
+        // Movement in Local Y (Up/Down) -> Rotates around X (Pitch) -> Bounce
+        // Movement in Local X (Left/Right) -> Rotates around Z (Roll/Sway) -> Sway
+        
+        // Force = -Movement (Inertia lags behind)
+        const forceX = -localMovement.y * 3000; // Vertical movement causes X-axis rotation
+        const forceZ = localMovement.x * 3000;  // Horizontal movement causes Z-axis rotation (Side sway)
+        
+        // 4. Spring Physics (Hooke's Law) for Rotation
+        // Target rotation is 0 (Rest pose)
+        const accelX = (forceX - this.stiffness * this.bone.rotation.x - this.damping * this.velocity.x) / this.mass;
+        const accelY = (forceZ - this.stiffness * this.bone.rotation.z - this.damping * this.velocity.y) / this.mass;
+        
+        this.velocity.x += accelX * dt;
+        this.velocity.y += accelY * dt;
+        
+        // 5. Apply Rotation
+        this.bone.rotation.x += this.velocity.x * dt;
+        this.bone.rotation.z += this.velocity.y * dt;
+        
+        // Clamp to prevent breaking
+        this.bone.rotation.x = THREE.MathUtils.clamp(this.bone.rotation.x, -0.3, 0.5); // Bounce limit
+        this.bone.rotation.z = THREE.MathUtils.clamp(this.bone.rotation.z, -0.2, 0.2); // Sway limit
+    }
+}
+
+
 export const Avatar3D: React.FC<Avatar3DProps> = ({ isSpeaking, audioAnalyser, gesture }) => {
-  // Helper to bypass CORS restrictions on the GCS bucket
-  // In production, you should configure CORS on the bucket itself: gsutil cors set ...
-  const getCorsUrl = (url: string) => `https://corsproxy.io/?${encodeURIComponent(url)}`;
-
-  // Cloud Storage Assets (Wrapped in CORS Proxy)
-  const MODEL_URL = getCorsUrl("https://storage.googleapis.com/3d_model/GoogleChan.fbx");
-  const IDLE_URL = getCorsUrl("https://storage.googleapis.com/3d_model/animations/Idle.fbx");
-  const TALK_URL = getCorsUrl("https://storage.googleapis.com/3d_model/animations/Talking1.fbx");
-  const NOD_URL = getCorsUrl("https://storage.googleapis.com/3d_model/animations/HeadNod.fbx");
-  const SHAKE_URL = getCorsUrl("https://storage.googleapis.com/3d_model/animations/HeadShake.fbx");
-
-  // Load Model
-  const model = useFBX(MODEL_URL);
   
-  // Load Animations
+  // Direct Google Cloud Storage URLs
+  const MODEL_URL = "https://storage.googleapis.com/3d_model/GoogleChan.fbx";
+  const IDLE_URL = "https://storage.googleapis.com/3d_model/animations/Idle.fbx";
+  const TALK_URL = "https://storage.googleapis.com/3d_model/animations/Talking1.fbx";
+  const NOD_URL = "https://storage.googleapis.com/3d_model/animations/HeadNod.fbx";
+  const SHAKE_URL = "https://storage.googleapis.com/3d_model/animations/HeadShake.fbx";
+
+  const model = useFBX(MODEL_URL);
   const idleFbx = useFBX(IDLE_URL);
   const talkFbx = useFBX(TALK_URL);
   const nodFbx = useFBX(NOD_URL);
   const shakeFbx = useFBX(SHAKE_URL);
 
-  // Rename animations
-  if (idleFbx.animations[0].name !== 'Idle') idleFbx.animations[0].name = 'Idle';
-  if (talkFbx.animations[0].name !== 'Talking') talkFbx.animations[0].name = 'Talking';
+  if (idleFbx.animations[0]) idleFbx.animations[0].name = 'Idle';
+  if (talkFbx.animations[0]) talkFbx.animations[0].name = 'Talking';
   if (nodFbx.animations[0]) nodFbx.animations[0].name = 'HeadNod';
   if (shakeFbx.animations[0]) shakeFbx.animations[0].name = 'HeadShake';
 
-  const animations = useMemo(() => {
-    return [
-        ...idleFbx.animations, 
-        ...talkFbx.animations,
-        ...(nodFbx.animations[0] ? [nodFbx.animations[0]] : []),
-        ...(shakeFbx.animations[0] ? [shakeFbx.animations[0]] : [])
-    ];
-  }, [idleFbx, talkFbx, nodFbx, shakeFbx]);
+  const animations = useMemo(() => [
+      ...(idleFbx.animations[0] ? [idleFbx.animations[0]] : []),
+      ...(talkFbx.animations[0] ? [talkFbx.animations[0]] : []),
+      ...(nodFbx.animations[0] ? [nodFbx.animations[0]] : []),
+      ...(shakeFbx.animations[0] ? [shakeFbx.animations[0]] : [])
+  ], [idleFbx, talkFbx, nodFbx, shakeFbx]);
 
   const group = useRef<THREE.Group>(null);
   const { actions } = useAnimations(animations, group);
 
-  // Create a flat gradient texture for the toon effect
-  // [5, 5, 5] gives a dark flat look that is balanced by ambient light
+  // Gradient for Toon
   const gradientTexture = useMemo(() => {
     const format = THREE.RedFormat;
     const colors = new Uint8Array([5, 5, 5]); 
@@ -61,161 +123,128 @@ export const Avatar3D: React.FC<Avatar3DProps> = ({ isSpeaking, audioAnalyser, g
     return texture;
   }, []);
 
-  // --- Lip Sync & Blink Logic ---
+  // Morph Targets
   const mouthMeshRef = useRef<THREE.Mesh | null>(null);
   const morphTargetIndexRef = useRef<number | null>(null);
-
   const blinkMeshRef = useRef<THREE.Mesh | null>(null);
   const blinkMorphIndexRef = useRef<number | null>(null);
-  
+
+  // Physics
+  const wiggleBones = useRef<WiggleBone[]>([]);
+
   // Blink State
   const nextBlinkTime = useRef<number>(0);
   const isBlinking = useRef<boolean>(false);
   const blinkStartTime = useRef<number>(0);
-  const BLINK_DURATION = 0.15; // Seconds
+  const BLINK_DURATION = 0.15; 
 
-  // Find the head mesh with blendshapes on load
   useEffect(() => {
     if (!model) return;
     
-    // Candidates for Lip Sync
-    const lipSyncCandidates = [
-      'Fcl_MTH_A', 'Fcl_MTH_I', 'Fcl_MTH_U', 'Fcl_MTH_E', 'Fcl_MTH_O', // Vroid standard
-      'A', 'aa', 'a', 'I', 'i', 'U', 'u', // Simple vowels
-      'MouthOpen', 'mouth_a', 'v_aa', 'Mouth_Open' // Generic
-    ];
+    wiggleBones.current = [];
 
-    // Candidates for Blinking
-    const blinkCandidates = [
-        'Fcl_EYE_Close', 'Fcl_EYE_Close_R', 'Blink', 'blink', 'EYE_Close', 'Fcl_EYE_Joy'
+    const lipSyncCandidates = [
+      'Fcl_MTH_A', 'Fcl_MTH_I', 'Fcl_MTH_U', 'Fcl_MTH_E', 'Fcl_MTH_O',
+      'A', 'aa', 'a', 'I', 'i', 'U', 'u',
+      'MouthOpen', 'mouth_a', 'v_aa', 'Mouth_Open'
     ];
+    const blinkCandidates = ['Fcl_EYE_Close', 'Fcl_EYE_Close_R', 'Blink', 'blink', 'EYE_Close', 'Fcl_EYE_Joy'];
 
     model.traverse((child) => {
       if ((child as THREE.Mesh).isMesh && (child as THREE.Mesh).morphTargetDictionary) {
         const mesh = child as THREE.Mesh;
         
-        // 1. Find Mouth
         if (!mouthMeshRef.current) {
             for (const name of lipSyncCandidates) {
                 if (mesh.morphTargetDictionary?.hasOwnProperty(name)) {
                     mouthMeshRef.current = mesh;
                     morphTargetIndexRef.current = mesh.morphTargetDictionary[name];
-                    console.log(`Lip Sync: Found target mesh "${mesh.name}" with morph "${name}"`);
                     break; 
                 }
             }
         }
 
-        // 2. Find Eyes (Blink) - Might be the same mesh as mouth
-        // We check separately in case they are different meshes or we haven't found one yet
         if (!blinkMeshRef.current || (blinkMeshRef.current === mouthMeshRef.current)) {
              for (const name of blinkCandidates) {
                 if (mesh.morphTargetDictionary?.hasOwnProperty(name)) {
                     blinkMeshRef.current = mesh;
                     blinkMorphIndexRef.current = mesh.morphTargetDictionary[name];
-                    console.log(`Blink: Found target mesh "${mesh.name}" with morph "${name}"`);
                     break;
                 }
             }
         }
       }
+
+      if ((child as THREE.Bone).isBone) {
+          const bone = child as THREE.Bone;
+          // Target just the ROOT bust bones.
+          // J_Sec_L_Bust1 / J_Sec_R_Bust1
+          if (bone.name === 'J_Sec_L_Bust1' || bone.name === 'J_Sec_R_Bust1' || bone.name === 'Breast_L' || bone.name === 'Breast_R') {
+              console.log(`Adding WiggleBone: ${bone.name}`);
+              wiggleBones.current.push(new WiggleBone(bone));
+          }
+      }
     });
+
   }, [model]);
 
-  // Frame Loop for Animation (Lip Sync + Blink)
-  useFrame((state) => {
+  useFrame((state, delta) => {
     const now = state.clock.elapsedTime;
 
-    // --- Lip Sync ---
+    // Lip Sync
     if (mouthMeshRef.current && morphTargetIndexRef.current !== null && audioAnalyser) {
-      // Get audio data
       const dataArray = new Uint8Array(audioAnalyser.frequencyBinCount);
       audioAnalyser.getByteFrequencyData(dataArray);
-      
-      // Calculate energy (simple average of lower frequencies for speech)
       const speechBins = dataArray.slice(0, dataArray.length / 2); 
       let sum = 0;
-      for (let i = 0; i < speechBins.length; i++) {
-        sum += speechBins[i];
-      }
-      const average = sum / speechBins.length;
-      
-      // Boost signal slightly to make mouth open more easily
-      const targetOpenness = Math.min(1, (average / 100) * 1.5);
-      
-      // Smooth interpolation (LERP)
+      for (let i = 0; i < speechBins.length; i++) sum += speechBins[i];
+      const targetOpenness = Math.min(1, (sum / speechBins.length / 100) * 1.5);
       const currentOpenness = mouthMeshRef.current.morphTargetInfluences![morphTargetIndexRef.current];
-      const smoothed = THREE.MathUtils.lerp(currentOpenness, targetOpenness, 0.3); 
-      
-      mouthMeshRef.current.morphTargetInfluences![morphTargetIndexRef.current] = smoothed;
+      mouthMeshRef.current.morphTargetInfluences![morphTargetIndexRef.current] = THREE.MathUtils.lerp(currentOpenness, targetOpenness, 0.3);
     } else if (mouthMeshRef.current && morphTargetIndexRef.current !== null && !isSpeaking) {
-       // Close mouth smoothly when not speaking
        const currentOpenness = mouthMeshRef.current.morphTargetInfluences![morphTargetIndexRef.current];
        mouthMeshRef.current.morphTargetInfluences![morphTargetIndexRef.current] = THREE.MathUtils.lerp(currentOpenness, 0, 0.2);
     }
 
-    // --- Blinking ---
+    // Blink
     if (blinkMeshRef.current && blinkMorphIndexRef.current !== null) {
-        // Trigger Blink
         if (!isBlinking.current && now > nextBlinkTime.current) {
             isBlinking.current = true;
             blinkStartTime.current = now;
-            // Schedule next blink (2 to 6 seconds later)
             nextBlinkTime.current = now + 2 + Math.random() * 4; 
         }
-
-        // Animate Blink
         if (isBlinking.current) {
             const progress = (now - blinkStartTime.current) / BLINK_DURATION;
-            
             if (progress >= 1) {
-                // Blink finished
                 isBlinking.current = false;
                 blinkMeshRef.current.morphTargetInfluences![blinkMorphIndexRef.current] = 0;
             } else {
-                // Bell curve 0 -> 1 -> 0
-                const value = Math.sin(progress * Math.PI);
-                blinkMeshRef.current.morphTargetInfluences![blinkMorphIndexRef.current] = value;
+                blinkMeshRef.current.morphTargetInfluences![blinkMorphIndexRef.current] = Math.sin(progress * Math.PI);
             }
         }
     }
+
+    // Physics Update
+    // Use fixed time step approx for stability
+    const dt = Math.min(delta, 0.03);
+    wiggleBones.current.forEach(wb => wb.update(dt));
   });
 
-  // Handle Gestures (One-shot animations)
   useEffect(() => {
       if (!actions || !gesture) return;
-      
       const action = actions[gesture];
       if (action) {
-          // Reset and play the gesture once
           action.reset().setLoop(THREE.LoopOnce, 1).fadeIn(0.2).play();
-          
-          // When finished, it will automatically blend back due to the main animation loop
-          // But we need to ensure the main loop (Idle/Talk) doesn't override it instantly.
-          // For simplicity in this setup, we let the gesture play on top (additive or override).
-          // To make it cleaner, we could pause idle, but mixing is usually fine for head nods.
-          
           action.clampWhenFinished = true;
-          
-          // Cleanup: fade out after duration (approx 2s for typical gestures)
-          const timeout = setTimeout(() => {
-              action.fadeOut(0.5);
-          }, 2000);
-          
+          const timeout = setTimeout(() => action.fadeOut(0.5), 2000);
           return () => clearTimeout(timeout);
       }
   }, [gesture, actions]);
 
-  // Handle Main Animation Switching (Idle vs Talking)
   useEffect(() => {
     if (!actions) return;
-
     const idleAction = actions['Idle'];
     const talkAction = actions['Talking'];
-
-    // Only crossfade if we aren't in the middle of a strong gesture that needs full body control
-    // But for head nods, it's fine to layer.
-
     if (isSpeaking) {
       idleAction?.fadeOut(0.2);
       talkAction?.reset().fadeIn(0.2).play();
@@ -225,7 +254,6 @@ export const Avatar3D: React.FC<Avatar3DProps> = ({ isSpeaking, audioAnalyser, g
     }
   }, [isSpeaking, actions]);
 
-  // Apply Toon Material
   useEffect(() => {
      if(model) {
         model.traverse((child) => {
@@ -233,24 +261,18 @@ export const Avatar3D: React.FC<Avatar3DProps> = ({ isSpeaking, audioAnalyser, g
                 const mesh = child as THREE.Mesh;
                 mesh.castShadow = false;
                 mesh.receiveShadow = false;
-                
                 const oldMat = mesh.material as THREE.MeshStandardMaterial;
-                
                 if (!Array.isArray(oldMat)) {
+                    // @ts-ignore 
+                    const { skinning, ...safeProps } = oldMat;
                     const toonMat = new THREE.MeshToonMaterial({
                         color: oldMat.color,
                         map: oldMat.map,
                         gradientMap: gradientTexture,
                         transparent: false,
-                        side: THREE.FrontSide,
-                        // @ts-ignore
-                        skinning: true 
+                        side: THREE.FrontSide
                     });
-                    
-                    if (toonMat.map) {
-                        toonMat.map.colorSpace = THREE.SRGBColorSpace;
-                    }
-
+                    if (toonMat.map) toonMat.map.colorSpace = THREE.SRGBColorSpace;
                     mesh.material = toonMat;
                 }
             }

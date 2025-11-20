@@ -50,6 +50,15 @@ export interface GoogleUser {
     picture: string;
 }
 
+export interface IntegrationsConfig {
+    workspace: boolean;     // Google Drive, Docs, etc.
+    youtube: boolean;       // YouTube Search/Video
+    media: boolean;         // YouTube Music
+    notifications: boolean; // Browser Notifications
+    openTabs: boolean;      // Allow opening new tabs/windows
+    personalizedSearch: boolean; // Custom Search API
+}
+
 declare global {
     interface Window {
         google: any;

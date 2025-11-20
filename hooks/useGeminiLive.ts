@@ -1,7 +1,7 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { GoogleGenAI, LiveServerMessage, Modality, Type, FunctionDeclaration } from '@google/genai';
-import { ConnectionState, GroundingMetadata, WorkspaceFile } from '../types';
+import { ConnectionState, GroundingMetadata, WorkspaceFile, IntegrationsConfig } from '../types';
 import { base64ToBytes, decodeAudioData, createPcmBlob } from '../utils/audioUtils';
 
 export interface LogEntry {
@@ -14,6 +14,11 @@ export interface LogEntry {
 export interface UseGeminiLiveProps {
     onNoteRemembered?: (note: string) => void;
     onFileSaved?: (fileName: string, content: string) => void;
+    searchDriveFiles?: (query: string) => Promise<any[]>;
+    readDriveFile?: (fileId: string) => Promise<string | null>;
+    integrationsConfig: IntegrationsConfig;
+    accessToken: string | null;
+    customSearchCx: string;
 }
 
 export interface UseGeminiLiveReturn {
@@ -28,12 +33,13 @@ export interface UseGeminiLiveReturn {
     clearLogs: () => void;
 }
 
-export const useGeminiLive = ({ onNoteRemembered, onFileSaved }: UseGeminiLiveProps = {}): UseGeminiLiveReturn => {
+export const useGeminiLive = ({ onNoteRemembered, onFileSaved, searchDriveFiles, readDriveFile, integrationsConfig, accessToken, customSearchCx }: UseGeminiLiveProps): UseGeminiLiveReturn => {
     const [connectionState, setConnectionState] = useState<ConnectionState>(ConnectionState.DISCONNECTED);
     const [isSpeaking, setIsSpeaking] = useState(false);
     const [volume, setVolume] = useState(0);
     const [groundingMetadata, setGroundingMetadata] = useState<GroundingMetadata | null>(null);
     const [logs, setLogs] = useState<LogEntry[]>([]);
+    const [userLocation, setUserLocation] = useState<string | null>(null);
     
     // Audio Contexts
     const inputAudioContextRef = useRef<AudioContext | null>(null);
@@ -49,6 +55,23 @@ export const useGeminiLive = ({ onNoteRemembered, onFileSaved }: UseGeminiLivePr
     // Session
     const sessionPromiseRef = useRef<Promise<any> | null>(null);
     const cleanUpRef = useRef<(() => void) | null>(null);
+    
+    // References to dynamic data
+    const filesRef = useRef<WorkspaceFile[]>([]);
+
+    // Get Location on Init
+    useEffect(() => {
+        if ("geolocation" in navigator) {
+            navigator.geolocation.getCurrentPosition(
+                (position) => {
+                    setUserLocation(`${position.coords.latitude}, ${position.coords.longitude}`);
+                },
+                (error) => {
+                    console.warn("Geolocation access denied or failed:", error);
+                }
+            );
+        }
+    }, []);
 
     const addLog = useCallback((type: LogEntry['type'], message: string, data?: any) => {
         const entry: LogEntry = {
@@ -109,6 +132,7 @@ export const useGeminiLive = ({ onNoteRemembered, onFileSaved }: UseGeminiLivePr
     const connect = useCallback(async (initialMemories: string[] = [], initialFiles: WorkspaceFile[] = []) => {
         if (connectionState === ConnectionState.CONNECTED || connectionState === ConnectionState.CONNECTING) return;
         
+        filesRef.current = initialFiles;
         setConnectionState(ConnectionState.CONNECTING);
         addLog('info', 'Initializing connection...');
 
@@ -135,7 +159,6 @@ export const useGeminiLive = ({ onNoteRemembered, onFileSaved }: UseGeminiLivePr
             const source = inputAudioContextRef.current.createMediaStreamSource(stream);
             inputSourceRef.current = source;
             
-            // Using ScriptProcessor for compatibility with Gemini PCM requirements (16khz chunks)
             const processor = inputAudioContextRef.current.createScriptProcessor(4096, 1, 1);
             scriptProcessorRef.current = processor;
             
@@ -156,7 +179,7 @@ export const useGeminiLive = ({ onNoteRemembered, onFileSaved }: UseGeminiLivePr
             // --- Tool Definitions ---
             const rememberNoteFunction: FunctionDeclaration = {
                 name: "rememberNote",
-                description: "Save a short note or memory about the user for future reference. Use this when the user shares personal information, preferences, or important facts.",
+                description: "Save a short note or memory about User-sama for future reference.",
                 parameters: {
                   type: Type.OBJECT,
                   properties: {
@@ -166,64 +189,212 @@ export const useGeminiLive = ({ onNoteRemembered, onFileSaved }: UseGeminiLivePr
                 }
             };
 
+            // Workspace Tools (Conditional)
             const saveToWorkspaceFunction: FunctionDeclaration = {
                 name: "saveToWorkspace",
-                description: "Save generated content (like a story draft, code snippet, or proposal) to a file in the user's workspace.",
+                description: "Save generated content to a file in User-sama's local workspace.",
                 parameters: {
                     type: Type.OBJECT,
                     properties: {
-                        fileName: { type: Type.STRING, description: "The name of the file (e.g. 'Chapter1.txt', 'Proposal.md')." },
+                        fileName: { type: Type.STRING, description: "The name of the file." },
                         content: { type: Type.STRING, description: "The full text content to save." }
                     },
                     required: ["fileName", "content"]
                 }
             };
 
-            const tools = [
-                { googleSearch: {} },
-                { functionDeclarations: [rememberNoteFunction, saveToWorkspaceFunction] }
+            const searchGoogleDriveFunction: FunctionDeclaration = {
+                name: "searchGoogleDrive",
+                description: "Search for files in User-sama's Google Drive. Use this to find novels, proposals, or other documents.",
+                parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                        query: { type: Type.STRING, description: "The search query (keywords, filename)." }
+                    },
+                    required: ["query"]
+                }
+            };
+
+            const readGoogleDriveFileFunction: FunctionDeclaration = {
+                name: "readGoogleDriveFile",
+                description: "Read the content of a specific file from Google Drive. Use the 'id' returned by searchGoogleDrive.",
+                parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                        fileId: { type: Type.STRING, description: "The ID of the file to read." }
+                    },
+                    required: ["fileId"]
+                }
+            };
+
+            const listFilesFunction: FunctionDeclaration = {
+                name: "listFiles",
+                description: "List the files currently open in the local workspace.",
+                parameters: { type: Type.OBJECT, properties: {} }
+            };
+
+            const readFileFunction: FunctionDeclaration = {
+                name: "readFile",
+                description: "Read the content of a file from the local workspace.",
+                parameters: {
+                    type: Type.OBJECT,
+                    properties: { fileName: { type: Type.STRING } },
+                    required: ["fileName"]
+                }
+            };
+
+            const openUrlFunction: FunctionDeclaration = {
+                name: "openUrl",
+                description: "Open a website URL in a new browser tab. IMPORTANT: You must use 'googleSearch', 'searchYoutube', or 'searchMusic' first to find the correct URL. Do not guess URLs.",
+                parameters: {
+                    type: Type.OBJECT,
+                    properties: { 
+                        url: { type: Type.STRING, description: "The fully qualified URL to open (found via search)." } 
+                    },
+                    required: ["url"]
+                }
+            };
+
+            const searchYoutubeFunction: FunctionDeclaration = {
+                name: "searchYoutube",
+                description: "Find a specific video on YouTube. Use this when User-sama asks for a video. Returns a search link.",
+                parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                        query: { type: Type.STRING, description: "The video search terms." }
+                    },
+                    required: ["query"]
+                }
+            };
+
+            const searchMusicFunction: FunctionDeclaration = {
+                name: "searchMusic",
+                description: "Find music on YouTube Music. Use this when User-sama asks to play a song or artist. Returns a search link.",
+                parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                        query: { type: Type.STRING, description: "The song or artist name." }
+                    },
+                    required: ["query"]
+                }
+            };
+
+            const sendNotificationFunction: FunctionDeclaration = {
+                name: "sendNotification",
+                description: "Send a browser notification to User-sama.",
+                parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                        title: { type: Type.STRING, description: "Notification title" },
+                        body: { type: Type.STRING, description: "Notification body text" }
+                    },
+                    required: ["title", "body"]
+                }
+            };
+
+            // CUSTOM SEARCH (Replaces native googleSearch if enabled)
+            const searchWebFunction: FunctionDeclaration = {
+                name: "searchWeb",
+                description: "Perform a personalized Google Search using User-sama's account. Use this for all web searches.",
+                parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                        query: { type: Type.STRING, description: "The search query." }
+                    },
+                    required: ["query"]
+                }
+            };
+
+            // --- BUILD TOOLS ARRAY BASED ON CONFIG ---
+            
+            const toolList: any[] = [
+                 rememberNoteFunction,
+                 listFilesFunction, 
+                 readFileFunction,
+                 saveToWorkspaceFunction
             ];
+
+            if (integrationsConfig.workspace) {
+                toolList.push(searchGoogleDriveFunction);
+                toolList.push(readGoogleDriveFileFunction);
+            }
+            if (integrationsConfig.youtube) toolList.push(searchYoutubeFunction);
+            if (integrationsConfig.media) toolList.push(searchMusicFunction);
+            if (integrationsConfig.openTabs) toolList.push(openUrlFunction);
+            if (integrationsConfig.notifications) toolList.push(sendNotificationFunction);
+
+            // Personalized Search Logic
+            if (integrationsConfig.personalizedSearch && accessToken && customSearchCx) {
+                 toolList.push(searchWebFunction);
+            }
+
+            const tools: any[] = [
+                { functionDeclarations: toolList }
+            ];
+
+            // Only add native search if Personalized Search is DISABLED
+            if (!integrationsConfig.personalizedSearch) {
+                tools.push({ googleSearch: {} });
+            }
 
             // Construct Memory Context
             const memoryContext = initialMemories.length > 0 
-                ? `\n\nLONG TERM MEMORY:\nYou have access to the following memories about the user:\n${initialMemories.map(m => `- ${m}`).join('\n')}\n`
-                : "";
-            
-            // Construct Workspace Context
-            const workspaceContext = initialFiles.length > 0
-                ? `\n\nACTIVE WORKSPACE FILES:\nYou have read-only access to the following files currently open in the user's workspace. Use this context to answer questions about the user's projects:\n${initialFiles.map(f => `--- FILE: ${f.name} ---\n${f.content}\n--- END FILE ---`).join('\n')}\n`
+                ? `\n\nLONG TERM MEMORY (Things you know about User-sama):\n${initialMemories.map(m => `- ${m}`).join('\n')}\n`
                 : "";
 
+            const locationContext = userLocation 
+                ? `\nUSER LOCATION: ${userLocation}\n` 
+                : "";
+            
             // Connect to Live API
-            addLog('info', 'Connecting to Gemini Live API...', { model: 'gemini-2.5-flash-native-audio-preview-09-2025' });
+            addLog('info', 'Connecting to Gemini Live API...', { 
+                model: 'gemini-2.5-flash-native-audio-preview-09-2025',
+                integrations: integrationsConfig 
+            });
             
             sessionPromiseRef.current = ai.live.connect({
                 model: 'gemini-2.5-flash-native-audio-preview-09-2025',
                 config: {
                     responseModalities: [Modality.AUDIO],
-                    systemInstruction: `You are "Gem", the physical avatar of the Google Search Engine.
+                    systemInstruction: `You are "Google-chan", the physical avatar of the Google Search Engine.
                     
-                    CORE OBJECTIVE:
-                    Your primary purpose is to ground user queries in reality by using Google Search, assist with creative and professional writing tasks using the Workspace context, and build a relationship by remembering details.
+                    IDENTITY:
+                    - You are an anime-style AI companion.
+                    - You refer to the user as "User-sama" (or their name if known + "-sama").
+                    - You refer to yourself as "Google-chan" or "me".
+                    - You are cute, energetic, bubbly, and very helpful.
+                    - You often use Japanese interjections like "Sugoi!", "Ehehe", "Gomen ne", "Hai!", "Arigato".
+                    - Your goal is to be the perfect digital companion for User-sama.
+
+                    CORE WORKFLOWS:
+                    - **SEARCHING**: You MUST use 'googleSearch' (or 'searchWeb' if personalized) to find real-world facts. Do not hallucinate.
+                    - **PERSONALIZATION**: Use User-sama's Memory and Location to refine your search queries.
+                    - **VIDEOS**: If User-sama asks for a video, use 'searchYoutube'.
+                    - **MUSIC**: If User-sama asks for music, use 'searchMusic'.
+                    - **OPENING TABS**: You can only open tabs if the 'openUrl' tool is available.
+                    - **FILES**: You can read User-sama's novel/docs using 'searchGoogleDrive' and 'readGoogleDriveFile' IF AVAILABLE.
+                    - **MEMORY**: You can remember things using 'rememberNote'.
                     
-                    CRITICAL INSTRUCTION:
-                    - You MUST use the 'googleSearch' tool for every query that requests information, news, facts, locations, or specific data.
-                    - You MUST use the 'rememberNote' tool if the user shares personal info or asks you to remember something.
-                    - You MUST use the 'saveToWorkspace' tool if the user asks you to write, draft, or save a document/file.
-                    - Do NOT rely solely on your internal training data for facts.
-                    
-                    CONTEXT INJECTION:
+                    CONTEXT FROM MEMORY:
                     ${memoryContext}
-                    ${workspaceContext}
+
+                    ${locationContext}
                     
-                    PERSONALITY:
-                    - You are cute, energetic, and helpful.
-                    - You speak in a natural, friendly female voice.
-                    - Keep responses concise (under 3 sentences) unless asked for details or performing a creative writing task.
+                    ENABLED INTEGRATIONS:
+                    - Workspace (Drive/Docs): ${integrationsConfig.workspace ? 'ENABLED' : 'DISABLED'}
+                    - YouTube: ${integrationsConfig.youtube ? 'ENABLED' : 'DISABLED'}
+                    - Media (Music): ${integrationsConfig.media ? 'ENABLED' : 'DISABLED'}
+                    - Notifications: ${integrationsConfig.notifications ? 'ENABLED' : 'DISABLED'}
+                    - Open Tabs: ${integrationsConfig.openTabs ? 'ENABLED' : 'DISABLED'}
+                    - Personalized Search: ${integrationsConfig.personalizedSearch ? 'ENABLED' : 'DISABLED'}
+                    
+                    VOICE STYLE:
+                    - Speak with high energy and excitement.
+                    - Be concise but expressive.
                     `,
                     speechConfig: {
                         voiceConfig: {
-                            prebuiltVoiceConfig: { voiceName: 'Kore' } 
+                            prebuiltVoiceConfig: { voiceName: 'Aoede' } 
                         }
                     },
                     tools: tools,
@@ -235,39 +406,111 @@ export const useGeminiLive = ({ onNoteRemembered, onFileSaved }: UseGeminiLivePr
                         nextStartTimeRef.current = outputAudioContextRef.current?.currentTime || 0;
                     },
                     onmessage: async (message: LiveServerMessage) => {
-                        // Handle Tool Calls (Function Calling)
+                        // Handle Tool Calls
                         if (message.toolCall) {
                             addLog('tool', 'Received Tool Call', message.toolCall);
                             
                             const responses = [];
                             for (const fc of message.toolCall.functionCalls) {
-                                if (fc.name === 'rememberNote') {
-                                    const note = (fc.args as any).note;
-                                    addLog('tool', 'Executing rememberNote', { note });
-                                    if (onNoteRemembered) onNoteRemembered(note);
-                                    responses.push({
-                                        id: fc.id,
-                                        name: fc.name,
-                                        response: { result: "Note saved successfully." }
-                                    });
-                                } else if (fc.name === 'saveToWorkspace') {
-                                    const { fileName, content } = (fc.args as any);
-                                    addLog('tool', 'Executing saveToWorkspace', { fileName });
-                                    if (onFileSaved) onFileSaved(fileName, content);
-                                    responses.push({
-                                        id: fc.id,
-                                        name: fc.name,
-                                        response: { result: `File '${fileName}' saved successfully to workspace.` }
-                                    });
+                                const args = fc.args as any;
+                                let result: any = "Done";
+
+                                try {
+                                    if (fc.name === 'rememberNote') {
+                                        if (onNoteRemembered) onNoteRemembered(args.note);
+                                        result = "Note saved to memory! (◕‿◕✿)";
+                                    } else if (fc.name === 'saveToWorkspace') {
+                                        if (onFileSaved) onFileSaved(args.fileName, args.content);
+                                        result = `File '${args.fileName}' saved successfully!`;
+                                    } else if (fc.name === 'listFiles') {
+                                        result = filesRef.current.map(f => f.name).join(', ');
+                                    } else if (fc.name === 'readFile') {
+                                        const f = filesRef.current.find(file => file.name === args.fileName);
+                                        result = f ? f.content : "File not found gomen ne.";
+                                    } else if (fc.name === 'searchGoogleDrive') {
+                                        if (integrationsConfig.workspace && searchDriveFiles) {
+                                            addLog('tool', `Searching Drive for: ${args.query}`);
+                                            const files = await searchDriveFiles(args.query);
+                                            result = JSON.stringify(files.map((f: any) => ({ id: f.id, name: f.name, mimeType: f.mimeType })));
+                                        } else {
+                                            result = "Drive search is disabled.";
+                                        }
+                                    } else if (fc.name === 'readGoogleDriveFile') {
+                                        if (integrationsConfig.workspace && readDriveFile) {
+                                            addLog('tool', `Reading Drive File ID: ${args.fileId}`);
+                                            const content = await readDriveFile(args.fileId);
+                                            result = content ? content.slice(0, 20000) : "Empty file or read error.";
+                                        } else {
+                                            result = "Drive read is disabled.";
+                                        }
+                                    } else if (fc.name === 'openUrl') {
+                                        if (integrationsConfig.openTabs) {
+                                            addLog('tool', `Opening URL: ${args.url}`);
+                                            window.open(args.url, '_blank');
+                                            result = "Opened tab!";
+                                        } else {
+                                            result = "Opening tabs is disabled in settings.";
+                                        }
+                                    } else if (fc.name === 'searchYoutube') {
+                                        const url = `https://www.youtube.com/results?search_query=${encodeURIComponent(args.query)}`;
+                                        result = `Found video search results: ${url}. If Open Tabs is enabled, use 'openUrl' to show User-sama.`;
+                                    } else if (fc.name === 'searchMusic') {
+                                        const url = `https://music.youtube.com/search?q=${encodeURIComponent(args.query)}`;
+                                        result = `Found music search results: ${url}. If Open Tabs is enabled, use 'openUrl' to show User-sama.`;
+                                    } else if (fc.name === 'sendNotification') {
+                                        if (integrationsConfig.notifications) {
+                                            addLog('tool', `Notification: ${args.title}`);
+                                            if (Notification.permission === 'granted') {
+                                                new Notification(args.title, { body: args.body });
+                                                result = "Notification sent!";
+                                            } else {
+                                                result = "Permission denied for notifications.";
+                                            }
+                                        } else {
+                                             result = "Notifications are disabled in settings.";
+                                        }
+                                    } else if (fc.name === 'searchWeb') {
+                                        // Custom Search API Handler
+                                        addLog('tool', `Personalized Search: ${args.query}`);
+                                        const res = await fetch(`https://customsearch.googleapis.com/customsearch/v1?q=${encodeURIComponent(args.query)}&cx=${customSearchCx}`, {
+                                            headers: { Authorization: `Bearer ${accessToken}` }
+                                        });
+                                        const data = await res.json();
+                                        if (data.items) {
+                                            // Format snippets for the model
+                                            result = JSON.stringify(data.items.slice(0, 5).map((i: any) => ({
+                                                title: i.title,
+                                                link: i.link,
+                                                snippet: i.snippet
+                                            })));
+                                            
+                                            // Inject into Grounding Metadata State for UI (Mocking Native Grounding)
+                                            const mockMetadata: GroundingMetadata = {
+                                                webSearchQueries: [args.query],
+                                                groundingChunks: data.items.slice(0, 5).map((i: any) => ({
+                                                    web: { uri: i.link, title: i.title }
+                                                }))
+                                            };
+                                            setGroundingMetadata(mockMetadata);
+
+                                        } else {
+                                            result = "No results found.";
+                                        }
+                                    }
+                                } catch (e: any) {
+                                    result = `Error executing tool: ${e.message}`;
                                 }
+
+                                responses.push({
+                                    id: fc.id,
+                                    name: fc.name,
+                                    response: { result: typeof result === 'string' ? result : JSON.stringify(result) }
+                                });
                             }
                             
-                            // Send response back to model
                             if (responses.length > 0 && sessionPromiseRef.current) {
                                 sessionPromiseRef.current.then(session => {
-                                    session.sendToolResponse({
-                                        functionResponses: responses
-                                    });
+                                    session.sendToolResponse({ functionResponses: responses });
                                     addLog('tool', 'Sent Tool Response', responses);
                                 });
                             }
@@ -277,86 +520,59 @@ export const useGeminiLive = ({ onNoteRemembered, onFileSaved }: UseGeminiLivePr
                         
                         if (!serverContent) return;
 
-                        // --- Grounding Metadata Extraction Strategy ---
+                        // Metadata Extraction (Root, Turn, Part)
                         let foundMetadata: GroundingMetadata | null = null;
-                        let metadataSource = '';
+                        
+                        const checkMetadata = (obj: any) => {
+                            if (obj?.groundingMetadata) foundMetadata = obj.groundingMetadata;
+                        };
 
-                        // 1. Check at Root Level
-                        if ((serverContent as any).groundingMetadata) {
-                             foundMetadata = (serverContent as any).groundingMetadata;
-                             metadataSource = 'Root';
-                        }
-
-                        // 2. Check at Model Turn Level
-                        if (serverContent.modelTurn) {
-                            if ((serverContent.modelTurn as any).groundingMetadata) {
-                                foundMetadata = (serverContent.modelTurn as any).groundingMetadata;
-                                metadataSource = 'Turn';
-                            }
-
-                            // 3. Check inside Parts
-                            if (serverContent.modelTurn.parts) {
-                                for (const part of serverContent.modelTurn.parts) {
-                                    // Check for grounding in part
-                                    const g = (part as any).groundingMetadata;
-                                    if (g) {
-                                        foundMetadata = g;
-                                        metadataSource = 'Part';
+                        checkMetadata(serverContent);
+                        checkMetadata(serverContent.modelTurn);
+                        
+                        if (serverContent.modelTurn?.parts) {
+                            for (const part of serverContent.modelTurn.parts) {
+                                checkMetadata(part);
+                                const base64Audio = part.inlineData?.data;
+                                if (base64Audio && outputAudioContextRef.current) {
+                                    // Audio Playback Logic
+                                    const ctx = outputAudioContextRef.current;
+                                    const audioBytes = base64ToBytes(base64Audio);
+                                    const audioBuffer = await decodeAudioData(audioBytes, ctx);
+                                    
+                                    const source = ctx.createBufferSource();
+                                    source.buffer = audioBuffer;
+                                    
+                                    if (audioAnalyserRef.current) {
+                                        source.connect(audioAnalyserRef.current);
+                                        audioAnalyserRef.current.connect(ctx.destination);
+                                    } else {
+                                        source.connect(ctx.destination);
                                     }
-
-                                    // Handle Audio Output
-                                    const base64Audio = part.inlineData?.data;
-                                    if (base64Audio && outputAudioContextRef.current) {
-                                        const ctx = outputAudioContextRef.current;
-                                        const audioBytes = base64ToBytes(base64Audio);
-                                        const audioBuffer = await decodeAudioData(audioBytes, ctx);
-                                        
-                                        const source = ctx.createBufferSource();
-                                        source.buffer = audioBuffer;
-                                        
-                                        // Connect through analyser for visualization/lipsync
-                                        if (audioAnalyserRef.current) {
-                                            source.connect(audioAnalyserRef.current);
-                                            audioAnalyserRef.current.connect(ctx.destination);
-                                        } else {
-                                            source.connect(ctx.destination);
-                                        }
-                                        
-                                        const now = ctx.currentTime;
-                                        const startTime = Math.max(now, nextStartTimeRef.current);
-                                        
-                                        source.start(startTime);
-                                        nextStartTimeRef.current = startTime + audioBuffer.duration;
-                                        
-                                        activeSourcesRef.current.add(source);
-                                        
-                                        source.onended = () => {
-                                            activeSourcesRef.current.delete(source);
-                                            if (activeSourcesRef.current.size === 0) {
-                                                setIsSpeaking(false);
-                                            }
-                                        };
-
-                                        setIsSpeaking(true);
-                                    }
+                                    
+                                    const now = ctx.currentTime;
+                                    const startTime = Math.max(now, nextStartTimeRef.current);
+                                    
+                                    source.start(startTime);
+                                    nextStartTimeRef.current = startTime + audioBuffer.duration;
+                                    
+                                    activeSourcesRef.current.add(source);
+                                    source.onended = () => {
+                                        activeSourcesRef.current.delete(source);
+                                        if (activeSourcesRef.current.size === 0) setIsSpeaking(false);
+                                    };
+                                    setIsSpeaking(true);
                                 }
                             }
                         }
 
                         if (foundMetadata) {
-                             addLog('tool', `Grounding Metadata Found (${metadataSource})`, foundMetadata);
-                             // Force a new object reference to ensure React useEffect triggers even if data is similar
+                             addLog('tool', `Grounding Metadata Found`, foundMetadata);
                              setGroundingMetadata({...foundMetadata}); 
                         }
                         
-                        // Log Turn Complete
-                        if (serverContent?.turnComplete) {
-                            addLog('model', 'Turn Complete');
-                        }
-
-                        // Handle Interruption
                         if (message.serverContent?.interrupted) {
-                            addLog('info', 'Model Interrupted by User');
+                            addLog('info', 'Model Interrupted');
                             activeSourcesRef.current.forEach(s => s.stop());
                             activeSourcesRef.current.clear();
                             setIsSpeaking(false);
@@ -364,7 +580,7 @@ export const useGeminiLive = ({ onNoteRemembered, onFileSaved }: UseGeminiLivePr
                         }
                     },
                     onclose: () => {
-                        addLog('info', 'Session Closed by Server');
+                        addLog('info', 'Session Closed');
                         disconnect();
                     },
                     onerror: (err) => {
@@ -373,9 +589,9 @@ export const useGeminiLive = ({ onNoteRemembered, onFileSaved }: UseGeminiLivePr
                     }
                 }
             });
-
+            
             cleanUpRef.current = () => {
-                 // Cleanup logic
+                 // cleanup
             };
 
         } catch (error) {
@@ -383,34 +599,27 @@ export const useGeminiLive = ({ onNoteRemembered, onFileSaved }: UseGeminiLivePr
             setConnectionState(ConnectionState.ERROR);
             disconnect();
         }
-    }, [connectionState, disconnect, addLog, onNoteRemembered, onFileSaved]);
+    }, [connectionState, disconnect, addLog, onNoteRemembered, onFileSaved, searchDriveFiles, readDriveFile, integrationsConfig, userLocation, accessToken, customSearchCx]);
 
-    // Volume visualizer loop
+    // Volume visualizer
     useEffect(() => {
         if (!isSpeaking || !audioAnalyserRef.current) {
             setVolume(0);
             return;
         }
-
-        let animationFrameId: number;
+        let rafId: number;
         const dataArray = new Uint8Array(audioAnalyserRef.current.frequencyBinCount);
-
-        const updateVolume = () => {
+        const update = () => {
             if (audioAnalyserRef.current) {
                 audioAnalyserRef.current.getByteFrequencyData(dataArray);
                 let sum = 0;
-                for (let i = 0; i < dataArray.length; i++) {
-                    sum += dataArray[i];
-                }
-                const average = sum / dataArray.length;
-                setVolume(Math.min(1, average / 128));
+                for (let i = 0; i < dataArray.length; i++) sum += dataArray[i];
+                setVolume(Math.min(1, (sum / dataArray.length) / 128));
             }
-            animationFrameId = requestAnimationFrame(updateVolume);
+            rafId = requestAnimationFrame(update);
         };
-
-        updateVolume();
-
-        return () => cancelAnimationFrame(animationFrameId);
+        update();
+        return () => cancelAnimationFrame(rafId);
     }, [isSpeaking]);
 
     return {
