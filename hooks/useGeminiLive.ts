@@ -712,13 +712,29 @@ export const useGeminiLive = ({
         }
         
         sessionPromiseRef.current.then(session => {
-            session.send({
-                clientContent: {
+            // We use snake_case here because session.send is often a raw pass-through
+            // to the underlying WebSocket protocol which expects snake_case.
+            const content = {
+                client_content: {
+                    turns: [{ role: 'user', parts: [{ text }] }],
+                    turn_complete: true
+                }
+            };
+
+            addLog('user', text);
+
+            if (typeof session.send === 'function') {
+                session.send(content);
+            } else if (typeof session.sendClientContent === 'function') {
+                // Helper method if available might prefer camelCase, but usually safe
+                session.sendClientContent({
                     turns: [{ role: 'user', parts: [{ text }] }],
                     turnComplete: true
-                }
-            });
-            addLog('user', text);
+                });
+            } else {
+                addLog('error', 'SDK Error: No method found to send text message.');
+                console.error("Session object missing send methods", session);
+            }
         });
     }, [addLog]);
 
