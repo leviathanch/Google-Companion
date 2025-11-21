@@ -1,3 +1,4 @@
+
 import React, { useEffect, useRef, useMemo } from 'react';
 import { useFrame, ThreeEvent } from '@react-three/fiber';
 import { useAnimations, useFBX } from '@react-three/drei';
@@ -8,10 +9,11 @@ interface Avatar3DProps {
   isSpeaking: boolean;
   audioAnalyser: AnalyserNode | null;
   gesture: string | null;
+  isDancing: boolean;
   onTouch?: (bodyPart: string) => void;
 }
 
-export const Avatar3D: React.FC<Avatar3DProps> = ({ isSpeaking, audioAnalyser, gesture, onTouch }) => {
+export const Avatar3D: React.FC<Avatar3DProps> = ({ isSpeaking, audioAnalyser, gesture, isDancing, onTouch }) => {
   
   // Direct Google Cloud Storage URLs
   const MODEL_URL = "https://storage.googleapis.com/3d_model/GoogleChan.fbx";
@@ -159,18 +161,14 @@ export const Avatar3D: React.FC<Avatar3DProps> = ({ isSpeaking, audioAnalyser, g
     bonesToWiggle.forEach((bone) => {
          // WiggleBone constructor clones the bone and adds a wrapper, 
          // so we must do this AFTER the traverse loop.
-         // Making sure that we create the WiggleBone only once for
-         // a bone rquires checking whether a target for the bone already
-         // exists
          if (newWiggleBones.some(wbone => wbone.target.name === bone.name)) {
            // We found at least one object that we're looking for!
          } else {
            const wb = new WiggleBone(bone, {
              velocity: 0.5,
-             stiffness: 50,
-             damping: 18 
+             stiffness: 300,
+             damping: 2000
            });
-           //console.log(wb);
            newWiggleBones.push(wb);
          }
     });
@@ -235,12 +233,9 @@ export const Avatar3D: React.FC<Avatar3DProps> = ({ isSpeaking, audioAnalyser, g
 
       wiggleBones.current.forEach(wb => {
           const bonePos = new THREE.Vector3();
-          // Note: WiggleBone wrapper stores the bone in .target
           wb.target.getWorldPosition(bonePos);
-          // 15cm tolerance
           if (point.distanceTo(bonePos) < 0.15) {
              hitChest = true;
-             // Add impulse logic here if library supports it later
           }
       });
 
@@ -249,35 +244,49 @@ export const Avatar3D: React.FC<Avatar3DProps> = ({ isSpeaking, audioAnalyser, g
       }
   };
 
+  // One-shot Gestures
   useEffect(() => {
-      if (!actions || !gesture) return;
+      if (!actions || !gesture || isDancing) return; // Ignore gestures if dancing
       const action = actions[gesture];
       if (action) {
           action.reset().setLoop(THREE.LoopOnce, 1).fadeIn(0.2).play();
           action.clampWhenFinished = true;
           
-          // Dynamic duration handling so Rumba plays fully
           const clipDuration = action.getClip().duration;
           const durationMs = clipDuration * 1000;
-          const fadeOutTime = Math.max(1000, durationMs - 500); // Fade out 0.5s before end
+          const fadeOutTime = Math.max(1000, durationMs - 500);
           
           const timeout = setTimeout(() => action.fadeOut(0.5), fadeOutTime);
           return () => clearTimeout(timeout);
       }
-  }, [gesture, actions]);
+  }, [gesture, actions, isDancing]);
 
+  // Base State: Idle vs Talking vs Dancing
   useEffect(() => {
     if (!actions) return;
+    
     const idleAction = actions['Idle'];
     const talkAction = actions['Talking'];
-    if (isSpeaking) {
-      idleAction?.fadeOut(0.2);
-      talkAction?.reset().fadeIn(0.2).play();
+    const rumbaAction = actions['Rumba'];
+
+    if (isDancing) {
+        // DANCING STATE
+        idleAction?.fadeOut(0.5);
+        talkAction?.fadeOut(0.5);
+        rumbaAction?.reset().setLoop(THREE.LoopRepeat, Infinity).fadeIn(0.5).play();
     } else {
-      talkAction?.fadeOut(0.2);
-      idleAction?.reset().fadeIn(0.2).play();
+        // NORMAL STATE
+        rumbaAction?.fadeOut(0.5);
+        
+        if (isSpeaking) {
+            idleAction?.fadeOut(0.2);
+            talkAction?.reset().fadeIn(0.2).play();
+        } else {
+            talkAction?.fadeOut(0.2);
+            idleAction?.reset().fadeIn(0.2).play();
+        }
     }
-  }, [isSpeaking, actions]);
+  }, [isSpeaking, isDancing, actions]);
 
   return (
     // @ts-ignore

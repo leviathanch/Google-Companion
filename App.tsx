@@ -2,7 +2,7 @@
 import React, { Suspense, useState, useEffect, useRef, useCallback } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
-import { Mic, MicOff, Search, AlertCircle, ExternalLink, LayoutGrid, X, Clock, ChevronDown, ChevronRight, Globe, MapPin, Trash2, Bug, Terminal, Brain, FileText, Upload, FilePlus, Cloud, CloudOff, User, Settings, Copy, Check, MonitorPlay, Smile, Frown, ShieldCheck, Lock, LogOut, Pin, Server, SlidersHorizontal, Music } from 'lucide-react';
+import { Mic, MicOff, Search, AlertCircle, ExternalLink, LayoutGrid, X, Clock, ChevronDown, ChevronRight, Globe, MapPin, Trash2, Bug, Terminal, Brain, FileText, Upload, FilePlus, Cloud, CloudOff, User, Settings, Copy, Check, MonitorPlay, Smile, Frown, ShieldCheck, Lock, LogOut, Pin, Server, SlidersHorizontal, Music, Play, Pause } from 'lucide-react';
 
 import { Avatar3D } from './components/Avatar3D';
 import { Loader } from './components/Loader';
@@ -63,6 +63,9 @@ const App = () => {
 
   // Animation Gestures
   const [currentGesture, setCurrentGesture] = useState<string | null>(null);
+  
+  // Music Player State
+  const [musicTrack, setMusicTrack] = useState<string | null>(null);
 
   // Debug
   const [isDebugOpen, setIsDebugOpen] = useState(false);
@@ -330,10 +333,16 @@ const App = () => {
   const deleteFile = (id: string) => setFiles(prev => prev.filter(f => f.id !== id));
   const clearFiles = () => { setFiles([]); localStorage.removeItem('gem_workspace_files'); };
 
+  // Music Handler
+  const handlePlayMusic = useCallback((query: string) => {
+      setMusicTrack(query);
+  }, []);
+
   // --- HOOK INIT ---
   const { connect, disconnect, connectionState, isSpeaking, volume, groundingMetadata, audioAnalyser, logs, clearLogs } = useGeminiLive({
       onNoteRemembered: handleNoteRemembered,
       onFileSaved: handleFileSaved,
+      onPlayMusic: handlePlayMusic,
       searchDriveFiles: searchDriveFiles,
       readDriveFile: readDriveFile,
       getTaskLists: getTaskLists,
@@ -434,7 +443,7 @@ const App = () => {
         {/* @ts-ignore */}
         <ambientLight intensity={0.3} />
         <Suspense fallback={<Loader />}>
-           <Avatar3D isSpeaking={isSpeaking} audioAnalyser={audioAnalyser} gesture={currentGesture} onTouch={handleAvatarTouch} />
+           <Avatar3D isSpeaking={isSpeaking} audioAnalyser={audioAnalyser} gesture={currentGesture} isDancing={!!musicTrack} onTouch={handleAvatarTouch} />
         </Suspense>
         <OrbitControls target={[0, 1.05, 0]} enableZoom={false} enableRotate={false} enablePan={false} />
       </Canvas>
@@ -664,6 +673,27 @@ const App = () => {
           config={integrations} 
           onToggle={toggleIntegration}
       />
+
+      {/* MUSIC PLAYER */}
+      {musicTrack && (
+          <div className="absolute bottom-32 left-1/2 transform -translate-x-1/2 z-30 bg-black rounded-2xl overflow-hidden shadow-[0_0_30px_rgba(220,38,38,0.4)] border border-red-500/30 animate-in slide-in-from-bottom-10 duration-500 w-80">
+              <div className="bg-gradient-to-r from-red-900/80 to-black p-3 flex items-center justify-between border-b border-white/10">
+                  <div className="flex items-center gap-2 text-white">
+                      <Music size={16} className="text-red-400 animate-pulse" />
+                      <span className="text-xs font-bold truncate max-w-[180px]">Playing: {musicTrack}</span>
+                  </div>
+                  <button onClick={() => setMusicTrack(null)} className="text-slate-400 hover:text-white transition-colors"><X size={16} /></button>
+              </div>
+              <div className="aspect-video w-full bg-black relative">
+                  <iframe 
+                      src={`https://www.youtube.com/embed?listType=search&list=${encodeURIComponent(musicTrack)}&autoplay=1`}
+                      className="absolute inset-0 w-full h-full"
+                      allow="autoplay; encrypted-media"
+                      allowFullScreen
+                  />
+              </div>
+          </div>
+      )}
 
       {/* API Configuration Modal */}
       {isApiConfigOpen && (

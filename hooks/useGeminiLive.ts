@@ -14,6 +14,7 @@ export interface LogEntry {
 export interface UseGeminiLiveProps {
     onNoteRemembered?: (note: string) => void;
     onFileSaved?: (fileName: string, content: string) => void;
+    onPlayMusic?: (query: string) => void;
     searchDriveFiles?: (query: string) => Promise<any[]>;
     readDriveFile?: (fileId: string) => Promise<string | null>;
     getTaskLists?: () => Promise<any[]>;
@@ -39,6 +40,7 @@ export interface UseGeminiLiveReturn {
 export const useGeminiLive = ({ 
     onNoteRemembered, 
     onFileSaved, 
+    onPlayMusic,
     searchDriveFiles, 
     readDriveFile, 
     getTaskLists,
@@ -315,11 +317,23 @@ export const useGeminiLive = ({
 
             const searchMusicFunction: FunctionDeclaration = {
                 name: "searchMusic",
-                description: "Find music on YouTube Music. Use this when User-sama asks to play a song or artist. Returns a search link.",
+                description: "Find music on YouTube Music. Use this when User-sama asks to find a song. Returns a search link.",
                 parameters: {
                     type: Type.OBJECT,
                     properties: {
                         query: { type: Type.STRING, description: "The song or artist name." }
+                    },
+                    required: ["query"]
+                }
+            };
+
+            const playMusicFunction: FunctionDeclaration = {
+                name: "playMusic",
+                description: "Play music directly in the app (YouTube). Use this when User-sama says 'Play [Song]'.",
+                parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                        query: { type: Type.STRING, description: "The song name, artist, or genre to play." }
                     },
                     required: ["query"]
                 }
@@ -368,7 +382,12 @@ export const useGeminiLive = ({
                 toolList.push(addTaskFunction);
             }
             if (integrationsConfig.youtube) toolList.push(searchYoutubeFunction);
-            if (integrationsConfig.media) toolList.push(searchMusicFunction);
+            
+            if (integrationsConfig.media) {
+                toolList.push(searchMusicFunction);
+                toolList.push(playMusicFunction); // Add Player Tool
+            }
+
             if (integrationsConfig.openTabs) toolList.push(openUrlFunction);
             if (integrationsConfig.notifications) toolList.push(sendNotificationFunction);
 
@@ -418,8 +437,9 @@ export const useGeminiLive = ({
                     CORE WORKFLOWS:
                     - **SEARCHING**: You MUST use 'googleSearch' (or 'searchWeb' if personalized) to find real-world facts. Do not hallucinate.
                     - **PERSONALIZATION**: Use User-sama's Memory and Location to refine your search queries.
-                    - **VIDEOS**: If User-sama asks for a video, use 'searchYoutube'.
-                    - **MUSIC**: If User-sama asks for music, use 'searchMusic'.
+                    - **VIDEOS**: If User-sama asks to *find* or *search* for a video, use 'searchYoutube'.
+                    - **MUSIC PLAYER**: If User-sama asks to **play** music (e.g. "Play [Song]"), use 'playMusic'. This opens the music player.
+                    - **MUSIC SEARCH**: If User-sama asks to *find* a song link, use 'searchMusic'.
                     - **OPENING TABS**: You can only open tabs if the 'openUrl' tool is available.
                     - **FILES**: You can read User-sama's novel/docs using 'searchGoogleDrive' and 'readGoogleDriveFile' IF AVAILABLE.
                     - **TASKS**: You can manage User-sama's To-Do list using 'listTasks' and 'addTask' IF AVAILABLE.
@@ -433,7 +453,7 @@ export const useGeminiLive = ({
                     ENABLED INTEGRATIONS:
                     - Workspace (Docs/Drive/Tasks): ${integrationsConfig.workspace ? 'ENABLED' : 'DISABLED'}
                     - YouTube: ${integrationsConfig.youtube ? 'ENABLED' : 'DISABLED'}
-                    - Media (Music): ${integrationsConfig.media ? 'ENABLED' : 'DISABLED'}
+                    - Media (Music Player): ${integrationsConfig.media ? 'ENABLED' : 'DISABLED'}
                     - Notifications: ${integrationsConfig.notifications ? 'ENABLED' : 'DISABLED'}
                     - Open Tabs: ${integrationsConfig.openTabs ? 'ENABLED' : 'DISABLED'}
                     - Personalized Search: ${integrationsConfig.personalizedSearch ? 'ENABLED' : 'DISABLED'}
@@ -531,6 +551,14 @@ export const useGeminiLive = ({
                                     } else if (fc.name === 'searchMusic') {
                                         const url = `https://music.youtube.com/search?q=${encodeURIComponent(args.query)}`;
                                         result = `Found music search results: ${url}. If Open Tabs is enabled, use 'openUrl' to show User-sama.`;
+                                    } else if (fc.name === 'playMusic') {
+                                        if (integrationsConfig.media) {
+                                            addLog('tool', `Playing Music: ${args.query}`);
+                                            if (onPlayMusic) onPlayMusic(args.query);
+                                            result = `Starting music player for '${args.query}' and I am starting to dance!`;
+                                        } else {
+                                            result = "Music Player is disabled in settings.";
+                                        }
                                     } else if (fc.name === 'sendNotification') {
                                         if (integrationsConfig.notifications) {
                                             addLog('tool', `Notification: ${args.title}`);
@@ -673,7 +701,7 @@ export const useGeminiLive = ({
             setConnectionState(ConnectionState.ERROR);
             disconnect();
         }
-    }, [connectionState, disconnect, addLog, onNoteRemembered, onFileSaved, searchDriveFiles, readDriveFile, getTaskLists, getTasks, addTask, integrationsConfig, userLocation, accessToken, customSearchCx]);
+    }, [connectionState, disconnect, addLog, onNoteRemembered, onFileSaved, onPlayMusic, searchDriveFiles, readDriveFile, getTaskLists, getTasks, addTask, integrationsConfig, userLocation, accessToken, customSearchCx]);
 
     // Volume visualizer
     useEffect(() => {
