@@ -29,6 +29,7 @@ export interface UseGeminiLiveReturn {
     connectionState: ConnectionState;
     connect: (initialMemories?: string[], initialFiles?: WorkspaceFile[]) => Promise<void>;
     disconnect: () => Promise<void>;
+    sendTextMessage: (text: string) => void;
     isSpeaking: boolean;
     volume: number;
     groundingMetadata: GroundingMetadata | null;
@@ -703,6 +704,21 @@ export const useGeminiLive = ({
         }
     }, [connectionState, disconnect, addLog, onNoteRemembered, onFileSaved, onPlayMusic, searchDriveFiles, readDriveFile, getTaskLists, getTasks, addTask, integrationsConfig, userLocation, accessToken, customSearchCx]);
 
+    // Send Text Message to Live Session
+    const sendTextMessage = useCallback((text: string) => {
+        if (sessionPromiseRef.current) {
+            sessionPromiseRef.current.then(session => {
+                session.send({
+                    clientContent: {
+                        turns: [{ role: 'user', parts: [{ text }] }],
+                        turnComplete: true
+                    }
+                });
+                addLog('user', text);
+            });
+        }
+    }, [addLog]);
+
     // Volume visualizer
     useEffect(() => {
         if (!isSpeaking || !audioAnalyserRef.current) {
@@ -728,6 +744,7 @@ export const useGeminiLive = ({
         connectionState,
         connect,
         disconnect,
+        sendTextMessage,
         isSpeaking,
         volume,
         groundingMetadata,

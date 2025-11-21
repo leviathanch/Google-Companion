@@ -2,7 +2,7 @@
 import React, { Suspense, useState, useEffect, useRef, useCallback } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
-import { Mic, MicOff, Search, AlertCircle, ExternalLink, LayoutGrid, X, Clock, ChevronDown, ChevronRight, Globe, MapPin, Trash2, Bug, Terminal, Brain, FileText, Upload, FilePlus, Cloud, CloudOff, User, Settings, Copy, Check, MonitorPlay, Smile, Frown, ShieldCheck, Lock, LogOut, Pin, Server, SlidersHorizontal, Music, Play, Pause } from 'lucide-react';
+import { Mic, MicOff, Search, AlertCircle, ExternalLink, LayoutGrid, X, Clock, ChevronDown, ChevronRight, Globe, MapPin, Trash2, Bug, Terminal, Brain, FileText, Upload, FilePlus, Cloud, CloudOff, User, Settings, Copy, Check, MonitorPlay, Smile, Frown, ShieldCheck, Lock, LogOut, Pin, Server, SlidersHorizontal, Music, Play, Pause, Keyboard, Send, MessageSquare } from 'lucide-react';
 
 import { Avatar3D } from './components/Avatar3D';
 import { Loader } from './components/Loader';
@@ -64,12 +64,17 @@ const App = () => {
   // Animation Gestures
   const [currentGesture, setCurrentGesture] = useState<string | null>(null);
   
-  // Music Player State
+  // Music Player & Dance State
   const [musicTrack, setMusicTrack] = useState<string | null>(null);
+  const [debugDance, setDebugDance] = useState(false);
 
   // Debug
   const [isDebugOpen, setIsDebugOpen] = useState(false);
   const debugScrollRef = useRef<HTMLDivElement>(null);
+  
+  // Text Chat Mode
+  const [isTextMode, setIsTextMode] = useState(false);
+  const [textInput, setTextInput] = useState("");
   
   // Audio Refs
   const giggleAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -339,7 +344,7 @@ const App = () => {
   }, []);
 
   // --- HOOK INIT ---
-  const { connect, disconnect, connectionState, isSpeaking, volume, groundingMetadata, audioAnalyser, logs, clearLogs } = useGeminiLive({
+  const { connect, disconnect, sendTextMessage, connectionState, isSpeaking, volume, groundingMetadata, audioAnalyser, logs, clearLogs } = useGeminiLive({
       onNoteRemembered: handleNoteRemembered,
       onFileSaved: handleFileSaved,
       onPlayMusic: handlePlayMusic,
@@ -443,7 +448,13 @@ const App = () => {
         {/* @ts-ignore */}
         <ambientLight intensity={0.3} />
         <Suspense fallback={<Loader />}>
-           <Avatar3D isSpeaking={isSpeaking} audioAnalyser={audioAnalyser} gesture={currentGesture} isDancing={!!musicTrack} onTouch={handleAvatarTouch} />
+           <Avatar3D 
+             isSpeaking={isSpeaking} 
+             audioAnalyser={audioAnalyser} 
+             gesture={currentGesture} 
+             isDancing={!!musicTrack || debugDance} 
+             onTouch={handleAvatarTouch} 
+           />
         </Suspense>
         <OrbitControls target={[0, 1.05, 0]} enableZoom={false} enableRotate={false} enablePan={false} />
       </Canvas>
@@ -824,14 +835,57 @@ const App = () => {
       <>
         <div className="absolute bottom-10 left-0 w-full flex justify-center items-center pointer-events-none z-30">
            <div className="pointer-events-auto flex flex-col items-center gap-5">
-              <div className={`flex items-center justify-center h-12 transition-opacity duration-500 ${isSpeaking ? 'opacity-100' : 'opacity-0'}`}>
-                 <div className="flex gap-1.5">{[...Array(5)].map((_, i) => (<div key={i} className="w-1.5 bg-indigo-400/80 rounded-full animate-[bounce_1s_infinite] shadow-[0_0_10px_rgba(129,140,248,0.5)]" style={{ height: `${Math.max(10, volume * 40 + (Math.random() * 20))}px`, animationDelay: `${i * 0.1}s` }} />))}</div>
+              {/* Visualizer (Hidden in Text Mode) */}
+              {!isTextMode && (
+                  <div className={`flex items-center justify-center h-12 transition-opacity duration-500 ${isSpeaking ? 'opacity-100' : 'opacity-0'}`}>
+                     <div className="flex gap-1.5">{[...Array(5)].map((_, i) => (<div key={i} className="w-1.5 bg-indigo-400/80 rounded-full animate-[bounce_1s_infinite] shadow-[0_0_10px_rgba(129,140,248,0.5)]" style={{ height: `${Math.max(10, volume * 40 + (Math.random() * 20))}px`, animationDelay: `${i * 0.1}s` }} />))}</div>
+                  </div>
+              )}
+
+              <div className="flex items-end gap-4">
+                  {/* Mode Toggle */}
+                  <button
+                      onClick={() => setIsTextMode(!isTextMode)}
+                      className="bg-slate-900/60 backdrop-blur-md p-3 rounded-full border border-white/10 text-slate-400 hover:text-white hover:bg-slate-800 transition-all shadow-lg mb-1"
+                      title={isTextMode ? "Switch to Voice" : "Switch to Text"}
+                  >
+                      {isTextMode ? <Mic size={20} /> : <Keyboard size={20} />}
+                  </button>
+
+                  {isTextMode ? (
+                      <div className="flex items-center gap-2 bg-slate-900/80 backdrop-blur-xl p-2 rounded-2xl border border-white/10 shadow-2xl w-80">
+                          <input
+                              type="text"
+                              value={textInput}
+                              onChange={(e) => setTextInput(e.target.value)}
+                              onKeyDown={(e) => { if(e.key === 'Enter' && textInput.trim()) { sendTextMessage(textInput); setTextInput(''); } }}
+                              placeholder="Type a message..."
+                              className="flex-1 bg-transparent border-none focus:ring-0 text-white placeholder:text-slate-500 text-sm px-2 outline-none"
+                              autoFocus
+                          />
+                          <button
+                              onClick={() => { if(textInput.trim()) { sendTextMessage(textInput); setTextInput(''); } }}
+                              className="p-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl transition-colors"
+                          >
+                              <Send size={16} />
+                          </button>
+                      </div>
+                  ) : (
+                      <div className="flex flex-col items-center gap-5">
+                          <button onClick={handleToggleConnection} disabled={connectionState === ConnectionState.CONNECTING} className={`group relative flex items-center justify-center w-16 h-16 rounded-full shadow-[0_0_40px_rgba(0,0,0,0.3)] transition-all duration-300 transform hover:scale-105 ${connectionState === ConnectionState.CONNECTED ? 'bg-red-500 hover:bg-red-600 text-white' : 'bg-indigo-600 hover:bg-indigo-500 text-white'} disabled:opacity-50 border border-white/10`}>
+                              {connectionState === ConnectionState.CONNECTED ? <Mic size={28} /> : <MicOff size={28} />}
+                              {connectionState === ConnectionState.CONNECTED && <span className="absolute -inset-1 rounded-full border-2 border-red-500/50 animate-ping opacity-50"></span>}
+                          </button>
+                      </div>
+                  )}
+                  
+                  {/* Spacer to balance layout if needed, or additional tools */}
+                  <div className="w-12" /> 
               </div>
-              <button onClick={handleToggleConnection} disabled={connectionState === ConnectionState.CONNECTING} className={`group relative flex items-center justify-center w-16 h-16 rounded-full shadow-[0_0_40px_rgba(0,0,0,0.3)] transition-all duration-300 transform hover:scale-105 ${connectionState === ConnectionState.CONNECTED ? 'bg-red-500 hover:bg-red-600 text-white' : 'bg-indigo-600 hover:bg-indigo-500 text-white'} disabled:opacity-50 border border-white/10`}>
-                  {connectionState === ConnectionState.CONNECTED ? <Mic size={28} /> : <MicOff size={28} />}
-                  {connectionState === ConnectionState.CONNECTED && <span className="absolute -inset-1 rounded-full border-2 border-red-500/50 animate-ping opacity-50"></span>}
-              </button>
-              <p className="text-sm text-slate-400 font-medium bg-slate-900/60 px-4 py-1.5 rounded-full backdrop-blur-md shadow-lg border border-white/5">{connectionState === ConnectionState.CONNECTED ? 'Listening...' : 'Tap to Start'}</p>
+              
+              {!isTextMode && (
+                  <p className="text-sm text-slate-400 font-medium bg-slate-900/60 px-4 py-1.5 rounded-full backdrop-blur-md shadow-lg border border-white/5">{connectionState === ConnectionState.CONNECTED ? 'Listening...' : 'Tap to Start'}</p>
+              )}
            </div>
         </div>
 
@@ -844,7 +898,13 @@ const App = () => {
                       <div className="flex items-center gap-1 mr-2 border-r border-white/10 pr-2">
                           <button onClick={() => triggerGesture('HeadNod')} className="text-emerald-400 hover:bg-emerald-400/10 p-1 rounded" title="Test Nod"><Smile size={14}/></button>
                           <button onClick={() => triggerGesture('HeadShake')} className="text-rose-400 hover:bg-rose-400/10 p-1 rounded" title="Test Shake"><Frown size={14}/></button>
-                          <button onClick={() => triggerGesture('Rumba')} className="text-yellow-400 hover:bg-yellow-400/10 p-1 rounded" title="Test Rumba"><Music size={14}/></button>
+                          <button 
+                            onClick={() => setDebugDance(!debugDance)} 
+                            className={`${debugDance ? 'text-yellow-400 bg-yellow-400/20' : 'text-slate-500 hover:text-yellow-400'} hover:bg-white/5 p-1 rounded transition-colors`} 
+                            title="Toggle Dance Loop"
+                          >
+                              <Music size={14}/>
+                          </button>
                       </div>
                       <button onClick={clearLogs} className="text-slate-500 hover:text-red-400 px-2 hover:bg-white/5 rounded">Clear</button>
                       <button onClick={() => setIsDebugOpen(false)} className="text-slate-500 hover:text-white px-2 hover:bg-white/5 rounded">Close</button>
