@@ -1,112 +1,46 @@
-
 import React, { useEffect, useRef, useMemo } from 'react';
-import { useFrame } from '@react-three/fiber';
+import { useFrame, ThreeEvent } from '@react-three/fiber';
 import { useAnimations, useFBX } from '@react-three/drei';
 import * as THREE from 'three';
+import { WiggleBone } from "../utils/wiggle/WiggleSpring";
 
 interface Avatar3DProps {
   isSpeaking: boolean;
   audioAnalyser: AnalyserNode | null;
   gesture: string | null;
+  onTouch?: (bodyPart: string) => void;
 }
 
-// Inline WiggleBone Class (mimicking the library logic)
-class WiggleBone {
-  bone: THREE.Bone;
-  velocity: THREE.Vector3;
-  position: THREE.Vector3;
-  initialRotation: THREE.Euler;
-  stiffness: number;
-  damping: number;
-
-  constructor(bone: THREE.Bone, options: { stiffness: number; damping: number }) {
-    this.bone = bone;
-    this.velocity = new THREE.Vector3();
-    this.position = new THREE.Vector3();
-    this.initialRotation = bone.rotation.clone();
-    this.stiffness = options.stiffness;
-    this.damping = options.damping;
-    
-    // Initialize position
-    this.bone.getWorldPosition(this.position);
-  }
-
-  update() {
-    // 1. Get current world position (where the bone is dragged to by the body)
-    const currentWorldPos = new THREE.Vector3();
-    this.bone.getWorldPosition(currentWorldPos);
-
-    // 2. Calculate the "movement" (inertia) relative to previous frame
-    // If the body moves UP, the bone wants to stay DOWN (relative velocity)
-    const movement = currentWorldPos.clone().sub(this.position);
-    
-    // 3. Add movement to velocity (Inertia)
-    // We invert it because if body moves UP, force is DOWN
-    this.velocity.add(movement.multiplyScalar(-1));
-
-    // 4. Spring Force (Hooke's Law): Pull velocity back to 0 (Rest)
-    // F = -k * x (Here x is essentially our velocity deviation from rest)
-    // Ideally we'd track a separate "displacement" vector, but simplified wiggle 
-    // often just damps the velocity to simulate the spring return.
-    // For rotation-based wiggle:
-    
-    // Let's calculate target rotation offsets based on this velocity
-    // Local conversion: We need the force in the bone's local space to know which way to rotate
-    const inverseRotation = this.bone.parent ? this.bone.parent.quaternion.clone().invert() : new THREE.Quaternion();
-    const localForce = this.velocity.clone().applyQuaternion(inverseRotation);
-
-    // 5. Apply Rotation
-    // Y-axis force -> X-axis Rotation (Bounce)
-    // X-axis force -> Z-axis Rotation (Sway)
-    const rotationForceX = localForce.y * 0.004; // Sensitivity
-    const rotationForceZ = localForce.x * 0.004;
-
-    // Add to existing rotation, but strictly damping it back to initial
-    // We use a "temporary" offset approach to prevent accumulation/deformation
-    // Reset to initial first
-    this.bone.rotation.copy(this.initialRotation);
-    
-    // Apply the physics offset
-    this.bone.rotation.x += rotationForceX * 10; // Scaler for visibility
-    this.bone.rotation.z -= rotationForceZ * 10;
-
-    // 6. Damping & Stiffness Step (Verlet-ish integration)
-    // Pull velocity back to zero
-    this.velocity.add(this.velocity.clone().multiplyScalar(-this.stiffness * 0.001));
-    this.velocity.multiplyScalar(1 - (this.damping * 0.001));
-
-    // Update history
-    this.bone.getWorldPosition(this.position);
-  }
-}
-
-export const Avatar3D: React.FC<Avatar3DProps> = ({ isSpeaking, audioAnalyser, gesture }) => {
+export const Avatar3D: React.FC<Avatar3DProps> = ({ isSpeaking, audioAnalyser, gesture, onTouch }) => {
   
   // Direct Google Cloud Storage URLs
-  // Using codetabs proxy to bypass Sandbox CORS if needed, or direct if user has extension
   const MODEL_URL = "https://storage.googleapis.com/3d_model/GoogleChan.fbx";
   const IDLE_URL = "https://storage.googleapis.com/3d_model/animations/Idle.fbx";
   const TALK_URL = "https://storage.googleapis.com/3d_model/animations/Talking1.fbx";
   const NOD_URL = "https://storage.googleapis.com/3d_model/animations/HeadNod.fbx";
   const SHAKE_URL = "https://storage.googleapis.com/3d_model/animations/HeadShake.fbx";
+  const RUMBA_URL = "https://storage.googleapis.com/3d_model/animations/RumbaDancing.fbx";
 
   const model = useFBX(MODEL_URL);
   const idleFbx = useFBX(IDLE_URL);
   const talkFbx = useFBX(TALK_URL);
   const nodFbx = useFBX(NOD_URL);
   const shakeFbx = useFBX(SHAKE_URL);
+  const rumbaFbx = useFBX(RUMBA_URL);
 
   if (idleFbx.animations[0]) idleFbx.animations[0].name = 'Idle';
   if (talkFbx.animations[0]) talkFbx.animations[0].name = 'Talking';
   if (nodFbx.animations[0]) nodFbx.animations[0].name = 'HeadNod';
   if (shakeFbx.animations[0]) shakeFbx.animations[0].name = 'HeadShake';
+  if (rumbaFbx.animations[0]) rumbaFbx.animations[0].name = 'Rumba';
 
   const animations = useMemo(() => [
       ...(idleFbx.animations[0] ? [idleFbx.animations[0]] : []),
       ...(talkFbx.animations[0] ? [talkFbx.animations[0]] : []),
       ...(nodFbx.animations[0] ? [nodFbx.animations[0]] : []),
-      ...(shakeFbx.animations[0] ? [shakeFbx.animations[0]] : [])
-  ], [idleFbx, talkFbx, nodFbx, shakeFbx]);
+      ...(shakeFbx.animations[0] ? [shakeFbx.animations[0]] : []),
+      ...(rumbaFbx.animations[0] ? [rumbaFbx.animations[0]] : [])
+  ], [idleFbx, talkFbx, nodFbx, shakeFbx, rumbaFbx]);
 
   const group = useRef<THREE.Group>(null);
   const { actions } = useAnimations(animations, group);
@@ -121,6 +55,9 @@ export const Avatar3D: React.FC<Avatar3DProps> = ({ isSpeaking, audioAnalyser, g
     texture.needsUpdate = true;
     return texture;
   }, []);
+
+  // Memoize Scene to prevent recreation on every render
+  const scene = useMemo(() => new THREE.Scene(), []);
 
   // Morph Targets & Physics Refs
   const mouthMeshRef = useRef<THREE.Mesh | null>(null);
@@ -137,10 +74,13 @@ export const Avatar3D: React.FC<Avatar3DProps> = ({ isSpeaking, audioAnalyser, g
   const blinkStartTime = useRef<number>(0);
   const BLINK_DURATION = 0.15; 
 
+  // Initialize Model, Materials, and Physics
   useEffect(() => {
     if (!model) return;
     
-    // 1. Setup Morph Targets
+    console.log("Initializing Avatar Model...");
+
+    // 1. Setup Morph Targets & Materials
     const lipSyncCandidates = [
       'Fcl_MTH_A', 'Fcl_MTH_I', 'Fcl_MTH_U', 'Fcl_MTH_E', 'Fcl_MTH_O',
       'A', 'aa', 'a', 'I', 'i', 'U', 'u',
@@ -149,10 +89,30 @@ export const Avatar3D: React.FC<Avatar3DProps> = ({ isSpeaking, audioAnalyser, g
     const blinkCandidates = ['Fcl_EYE_Close', 'Fcl_EYE_Close_R', 'Blink', 'blink', 'EYE_Close', 'Fcl_EYE_Joy'];
 
     model.traverse((child) => {
-      // Find Meshes for Morphs
+      // Materials
+      if ((child as THREE.Mesh).isMesh) {
+          const mesh = child as THREE.Mesh;
+          mesh.castShadow = false;
+          mesh.receiveShadow = false;
+          const oldMat = mesh.material as THREE.MeshStandardMaterial;
+          if (!Array.isArray(oldMat)) {
+              // @ts-ignore 
+              const { skinning, ...safeProps } = oldMat;
+              const toonMat = new THREE.MeshToonMaterial({
+                  color: oldMat.color,
+                  map: oldMat.map,
+                  gradientMap: gradientTexture,
+                  transparent: false,
+                  side: THREE.FrontSide
+              });
+              if (toonMat.map) toonMat.map.colorSpace = THREE.SRGBColorSpace;
+              mesh.material = toonMat;
+          }
+      }
+
+      // Morphs
       if ((child as THREE.Mesh).isMesh && (child as THREE.Mesh).morphTargetDictionary) {
         const mesh = child as THREE.Mesh;
-        
         if (!mouthMeshRef.current) {
             for (const name of lipSyncCandidates) {
                 if (mesh.morphTargetDictionary?.hasOwnProperty(name)) {
@@ -162,7 +122,6 @@ export const Avatar3D: React.FC<Avatar3DProps> = ({ isSpeaking, audioAnalyser, g
                 }
             }
         }
-
         if (!blinkMeshRef.current || (blinkMeshRef.current === mouthMeshRef.current)) {
              for (const name of blinkCandidates) {
                 if (mesh.morphTargetDictionary?.hasOwnProperty(name)) {
@@ -173,34 +132,64 @@ export const Avatar3D: React.FC<Avatar3DProps> = ({ isSpeaking, audioAnalyser, g
             }
         }
       }
-      
-      // Find Bones for Physics
+    });
+
+    // 4. Add to Scene
+    scene.add(model);
+
+    // 2. Find Bones First (Do not modify scene graph during traversal to avoid infinite loops)
+    const bonesToWiggle: THREE.Bone[] = [];
+    model.traverse((child) => {
       if ((child as THREE.Bone).isBone) {
           const bone = child as THREE.Bone;
           // Target Bust1 and Bust2 for both sides
           if (
-              bone.name.includes('J_Sec_L_Bust1') || 
-              bone.name.includes('J_Sec_R_Bust1') ||
-              bone.name.includes('J_Sec_L_Bust2') || 
-              bone.name.includes('J_Sec_R_Bust2')
+              bone.name == 'J_Sec_L_Bust1' ||
+              bone.name == 'J_Sec_R_Bust1' ||
+              bone.name == 'J_Sec_L_Bust2' ||
+              bone.name == 'J_Sec_R_Bust2'
           ) {
-               // Prevent duplicates if strict mode runs twice
-               if (!wiggleBones.current.find(wb => wb.bone === bone)) {
-                   console.log("Adding WiggleBone:", bone.name);
-                   // Use user provided values: Stiffness 700, Damping 28
-                   wiggleBones.current.push(new WiggleBone(bone, { stiffness: 700, damping: 28 }));
-               }
+               bonesToWiggle.push(bone);
           }
       }
     });
 
-  }, [model]);
+    // 3. Initialize Wiggle Bones (Modifies Scene Graph)
+    const newWiggleBones: WiggleBone[] = [];
+    bonesToWiggle.forEach((bone) => {
+         // WiggleBone constructor clones the bone and adds a wrapper, 
+         // so we must do this AFTER the traverse loop.
+         // Making sure that we create the WiggleBone only once for
+         // a bone rquires checking whether a target for the bone already
+         // exists
+         if (newWiggleBones.some(wbone => wbone.target.name === bone.name)) {
+           // We found at least one object that we're looking for!
+         } else {
+           const wb = new WiggleBone(bone, {
+             velocity: 0.5,
+             stiffness: 50,
+             damping: 18 
+           });
+           //console.log(wb);
+           newWiggleBones.push(wb);
+         }
+    });
+    wiggleBones.current = newWiggleBones;
+
+    // Cleanup
+    return () => {
+        console.log("Cleaning up Avatar...");
+        wiggleBones.current.forEach(wb => wb.dispose());
+        wiggleBones.current = [];
+        scene.remove(model);
+    };
+  }, [model, gradientTexture, scene]);
 
   useFrame((state, delta) => {
     const now = state.clock.elapsedTime;
 
     // 1. Update Physics
-    wiggleBones.current.forEach(wb => wb.update());
+    wiggleBones.current.forEach(wb => wb.update(delta));
 
     // 2. Lip Sync
     if (mouthMeshRef.current && morphTargetIndexRef.current !== null && audioAnalyser) {
@@ -236,13 +225,43 @@ export const Avatar3D: React.FC<Avatar3DProps> = ({ isSpeaking, audioAnalyser, g
     }
   });
 
+  // Handle Touches
+  const handlePointerDown = (e: ThreeEvent<PointerEvent>) => {
+      e.stopPropagation();
+      const point = e.point;
+      
+      // Check distance to bust bones
+      let hitChest = false;
+
+      wiggleBones.current.forEach(wb => {
+          const bonePos = new THREE.Vector3();
+          // Note: WiggleBone wrapper stores the bone in .target
+          wb.target.getWorldPosition(bonePos);
+          // 15cm tolerance
+          if (point.distanceTo(bonePos) < 0.15) {
+             hitChest = true;
+             // Add impulse logic here if library supports it later
+          }
+      });
+
+      if (hitChest && onTouch) {
+          onTouch('chest');
+      }
+  };
+
   useEffect(() => {
       if (!actions || !gesture) return;
       const action = actions[gesture];
       if (action) {
           action.reset().setLoop(THREE.LoopOnce, 1).fadeIn(0.2).play();
           action.clampWhenFinished = true;
-          const timeout = setTimeout(() => action.fadeOut(0.5), 2000);
+          
+          // Dynamic duration handling so Rumba plays fully
+          const clipDuration = action.getClip().duration;
+          const durationMs = clipDuration * 1000;
+          const fadeOutTime = Math.max(1000, durationMs - 500); // Fade out 0.5s before end
+          
+          const timeout = setTimeout(() => action.fadeOut(0.5), fadeOutTime);
           return () => clearTimeout(timeout);
       }
   }, [gesture, actions]);
@@ -260,37 +279,14 @@ export const Avatar3D: React.FC<Avatar3DProps> = ({ isSpeaking, audioAnalyser, g
     }
   }, [isSpeaking, actions]);
 
-  useEffect(() => {
-     if(model) {
-        model.traverse((child) => {
-            if ((child as THREE.Mesh).isMesh) {
-                const mesh = child as THREE.Mesh;
-                mesh.castShadow = false;
-                mesh.receiveShadow = false;
-                const oldMat = mesh.material as THREE.MeshStandardMaterial;
-                if (!Array.isArray(oldMat)) {
-                    // @ts-ignore 
-                    const { skinning, ...safeProps } = oldMat;
-                    const toonMat = new THREE.MeshToonMaterial({
-                        color: oldMat.color,
-                        map: oldMat.map,
-                        gradientMap: gradientTexture,
-                        transparent: false,
-                        side: THREE.FrontSide
-                    });
-                    if (toonMat.map) toonMat.map.colorSpace = THREE.SRGBColorSpace;
-                    mesh.material = toonMat;
-                }
-            }
-        });
-     }
-  }, [model, gradientTexture]);
-
   return (
     // @ts-ignore
     <group ref={group} dispose={null} scale={0.02} position={[0, -1, 0]}>
       {/* @ts-ignore */}
-      <primitive object={model} />
+      <primitive
+        object={scene} 
+        onPointerDown={handlePointerDown}
+      />
     {/* @ts-ignore */}
     </group>
   );

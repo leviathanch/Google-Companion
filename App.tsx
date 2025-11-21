@@ -2,7 +2,7 @@
 import React, { Suspense, useState, useEffect, useRef, useCallback } from 'react';
 import { Canvas } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
-import { Mic, MicOff, Search, AlertCircle, ExternalLink, LayoutGrid, X, Clock, ChevronDown, ChevronRight, Globe, MapPin, Trash2, Bug, Terminal, Brain, FileText, Upload, FilePlus, Cloud, CloudOff, User, Settings, Copy, Check, MonitorPlay, Smile, Frown, ShieldCheck, Lock, LogOut, Pin, Server, SlidersHorizontal } from 'lucide-react';
+import { Mic, MicOff, Search, AlertCircle, ExternalLink, LayoutGrid, X, Clock, ChevronDown, ChevronRight, Globe, MapPin, Trash2, Bug, Terminal, Brain, FileText, Upload, FilePlus, Cloud, CloudOff, User, Settings, Copy, Check, MonitorPlay, Smile, Frown, ShieldCheck, Lock, LogOut, Pin, Server, SlidersHorizontal, Music } from 'lucide-react';
 
 import { Avatar3D } from './components/Avatar3D';
 import { Loader } from './components/Loader';
@@ -13,6 +13,7 @@ import { useRemoteStorage, SearchHistoryItem } from './hooks/useRemoteStorage';
 import { ConnectionState, GroundingChunk, GroundingMetadata, Memory, WorkspaceFile, IntegrationsConfig } from './types';
 
 const DEFAULT_CUSTOM_SEARCH_CX = "05458f6c63b8b40ac";
+const GIGGLE_URL = "https://storage.googleapis.com/3d_model/audio/giggle.wav";
 
 const App = () => {
   // --- STATES ---
@@ -67,11 +68,19 @@ const App = () => {
   const [isDebugOpen, setIsDebugOpen] = useState(false);
   const debugScrollRef = useRef<HTMLDivElement>(null);
   
+  // Audio Refs
+  const giggleAudioRef = useRef<HTMLAudioElement | null>(null);
+  
   // Refs for Logic
   const latestSearchQueryRef = useRef<string>("");
 
   // --- INITIALIZATION ---
   
+  useEffect(() => {
+      giggleAudioRef.current = new Audio(GIGGLE_URL);
+      giggleAudioRef.current.volume = 0.6; // Set volume slightly lower so it doesn't blast
+  }, []);
+
   const loadLocalMemories = () => {
       try {
           const storedMem = localStorage.getItem('gem_long_term_memory');
@@ -220,8 +229,19 @@ const App = () => {
 
   const triggerGesture = useCallback((gestureName: string) => {
       setCurrentGesture(gestureName);
-      setTimeout(() => setCurrentGesture(null), 2500);
+      // Timeout will be handled by Avatar3D useEffect based on clip duration
+      setTimeout(() => setCurrentGesture(null), 100); 
   }, []);
+
+  const handleAvatarTouch = useCallback((bodyPart: string) => {
+      if (bodyPart === 'chest') {
+          triggerGesture('HeadShake');
+          if (giggleAudioRef.current) {
+              giggleAudioRef.current.currentTime = 0;
+              giggleAudioRef.current.play().catch(e => console.warn("Audio playback failed:", e));
+          }
+      }
+  }, [triggerGesture]);
 
   // Google Login Handler
   const handleLogin = () => {
@@ -411,7 +431,7 @@ const App = () => {
         {/* @ts-ignore */}
         <ambientLight intensity={0.3} />
         <Suspense fallback={<Loader />}>
-           <Avatar3D isSpeaking={isSpeaking} audioAnalyser={audioAnalyser} gesture={currentGesture} />
+           <Avatar3D isSpeaking={isSpeaking} audioAnalyser={audioAnalyser} gesture={currentGesture} onTouch={handleAvatarTouch} />
         </Suspense>
         <OrbitControls target={[0, 1.05, 0]} enableZoom={false} enableRotate={false} enablePan={false} />
       </Canvas>
@@ -791,6 +811,7 @@ const App = () => {
                       <div className="flex items-center gap-1 mr-2 border-r border-white/10 pr-2">
                           <button onClick={() => triggerGesture('HeadNod')} className="text-emerald-400 hover:bg-emerald-400/10 p-1 rounded" title="Test Nod"><Smile size={14}/></button>
                           <button onClick={() => triggerGesture('HeadShake')} className="text-rose-400 hover:bg-rose-400/10 p-1 rounded" title="Test Shake"><Frown size={14}/></button>
+                          <button onClick={() => triggerGesture('Rumba')} className="text-yellow-400 hover:bg-yellow-400/10 p-1 rounded" title="Test Rumba"><Music size={14}/></button>
                       </div>
                       <button onClick={clearLogs} className="text-slate-500 hover:text-red-400 px-2 hover:bg-white/5 rounded">Clear</button>
                       <button onClick={() => setIsDebugOpen(false)} className="text-slate-500 hover:text-white px-2 hover:bg-white/5 rounded">Close</button>
