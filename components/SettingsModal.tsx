@@ -1,6 +1,6 @@
 
 import React from 'react';
-import { X, Mail, FileText, HardDrive, Calendar, Youtube, Music, Bell, Monitor, Search, Globe, Info } from 'lucide-react';
+import { X, Mail, FileText, HardDrive, Calendar, Youtube, Music, Bell, Monitor, Search, Globe, Info, CheckSquare } from 'lucide-react';
 import { IntegrationsConfig } from '../types';
 
 interface SettingsModalProps {
@@ -57,6 +57,9 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, c
                                             </div>
                                             <div className="flex items-center gap-1.5 text-xs text-gray-300 bg-black/20 px-2 py-1 rounded border border-white/5">
                                                 <HardDrive size={12} className="text-green-400" /> Drive
+                                            </div>
+                                            <div className="flex items-center gap-1.5 text-xs text-gray-300 bg-black/20 px-2 py-1 rounded border border-white/5">
+                                                <CheckSquare size={12} className="text-indigo-400" /> Tasks
                                             </div>
                                             <div className="flex items-center gap-1.5 text-xs text-gray-300 bg-black/20 px-2 py-1 rounded border border-white/5">
                                                 <Calendar size={12} className="text-blue-400" /> Calendar

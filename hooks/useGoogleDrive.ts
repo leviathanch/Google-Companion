@@ -6,8 +6,9 @@ import { Memory, GoogleUser } from '../types';
 const DEFAULT_CLIENT_ID = "210614270256-ppo1vmagl3roimn5duo8ma98ev6fla6d.apps.googleusercontent.com";
 
 // Scopes split for granular permissions
+// Added 'tasks' scope for Todo management
 const BASE_SCOPES = 'https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email openid';
-const DRIVE_SCOPES = 'https://www.googleapis.com/auth/drive.readonly';
+const DRIVE_SCOPES = 'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/tasks';
 const SEARCH_SCOPES = 'https://www.googleapis.com/auth/cse';
 
 const TOKEN_STORAGE_KEY = 'gem_google_access_token';
@@ -72,15 +73,6 @@ export const useGoogleDrive = () => {
             
             // Check for pending permission request (Granular Upgrade)
             if (permissionResolverRef.current) {
-                 // We check for specific scopes based on what we requested, 
-                 // but checking 'hasGrantedAllScopes' against the requested scope string is easiest.
-                 // However, tokenResponse doesn't easily tell us WHICH request this was for.
-                 // We'll assume if we got a token while a resolver is waiting, it's likely for that.
-                 // A more robust check:
-                 const scopes = tokenResponse.scope; 
-                 // Since we can't easily pass the "requested scope" here without more state,
-                 // we will just resolve true, relying on the user interaction flow.
-                 // The caller can verify specific scopes if needed.
                  permissionResolverRef.current(true);
                  permissionResolverRef.current = null;
             }
@@ -113,8 +105,9 @@ export const useGoogleDrive = () => {
             try {
                 await new Promise<void>((resolve) => window.gapi.load('client', resolve));
                 await window.gapi.client.init({});
-                // Load Drive API for Documents feature
+                // Load APIs
                 await window.gapi.client.load('drive', 'v3');
+                await window.gapi.client.load('tasks', 'v1');
                 
                 const storedToken = localStorage.getItem(TOKEN_STORAGE_KEY);
                 const storedExpiry = localStorage.getItem(TOKEN_EXPIRY_KEY);
@@ -172,12 +165,10 @@ export const useGoogleDrive = () => {
     // --- MEMORIES (Local Storage Only) ---
     
     const loadMemories = useCallback(async (): Promise<Memory[] | null> => {
-        // Return null to signal App to use LocalStorage
         return null;
     }, []);
 
     const saveMemory = useCallback(async (memory: Memory) => {
-        // No-op: App handles LocalStorage saving
     }, []);
 
 
@@ -222,6 +213,49 @@ export const useGoogleDrive = () => {
             return null;
         }
     }, [accessToken]);
+
+    // --- GOOGLE TASKS ---
+
+    const getTaskLists = useCallback(async () => {
+        if (!accessToken || !window.gapi?.client?.tasks) return [];
+        try {
+            const response = await window.gapi.client.tasks.tasklists.list();
+            return response.result.items || [];
+        } catch (error) {
+            console.error("[Tasks] Error fetching lists:", error);
+            return [];
+        }
+    }, [accessToken]);
+
+    const getTasks = useCallback(async (tasklistId: string = '@default') => {
+        if (!accessToken || !window.gapi?.client?.tasks) return [];
+        try {
+            const response = await window.gapi.client.tasks.tasks.list({
+                tasklist: tasklistId,
+                showCompleted: false,
+                maxResults: 20
+            });
+            return response.result.items || [];
+        } catch (error) {
+            console.error("[Tasks] Error fetching tasks:", error);
+            return [];
+        }
+    }, [accessToken]);
+
+    const addTask = useCallback(async (title: string, notes?: string, tasklistId: string = '@default') => {
+        if (!accessToken || !window.gapi?.client?.tasks) return null;
+        try {
+            const response = await window.gapi.client.tasks.tasks.insert({
+                tasklist: tasklistId,
+                resource: { title, notes }
+            });
+            return response.result;
+        } catch (error) {
+            console.error("[Tasks] Error adding task:", error);
+            return null;
+        }
+    }, [accessToken]);
+
 
     const login = useCallback(() => {
         if (tokenClient) {
@@ -272,6 +306,9 @@ export const useGoogleDrive = () => {
         saveMemory,
         searchDriveFiles,
         readDriveFile,
+        getTaskLists,
+        getTasks,
+        addTask,
         requestDrivePermissions,
         requestSearchPermissions,
         clientId,

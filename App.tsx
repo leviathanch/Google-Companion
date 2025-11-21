@@ -19,7 +19,7 @@ const App = () => {
   // --- STATES ---
   
   // Google Drive / Auth
-  const { login, logout, user: googleUser, accessToken, isSyncing, clientId, setClientId, searchDriveFiles, readDriveFile, requestDrivePermissions, requestSearchPermissions } = useGoogleDrive();
+  const { login, logout, user: googleUser, accessToken, isSyncing, clientId, setClientId, searchDriveFiles, readDriveFile, getTaskLists, getTasks, addTask, requestDrivePermissions, requestSearchPermissions } = useGoogleDrive();
   const [isClientIdModalOpen, setIsClientIdModalOpen] = useState(false);
   const [tempClientId, setTempClientId] = useState("");
   const [originCopied, setOriginCopied] = useState(false);
@@ -336,6 +336,9 @@ const App = () => {
       onFileSaved: handleFileSaved,
       searchDriveFiles: searchDriveFiles,
       readDriveFile: readDriveFile,
+      getTaskLists: getTaskLists,
+      getTasks: getTasks,
+      addTask: addTask,
       integrationsConfig: integrations,
       accessToken: accessToken,
       customSearchCx: DEFAULT_CUSTOM_SEARCH_CX

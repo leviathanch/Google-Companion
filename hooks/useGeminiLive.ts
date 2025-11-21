@@ -16,6 +16,9 @@ export interface UseGeminiLiveProps {
     onFileSaved?: (fileName: string, content: string) => void;
     searchDriveFiles?: (query: string) => Promise<any[]>;
     readDriveFile?: (fileId: string) => Promise<string | null>;
+    getTaskLists?: () => Promise<any[]>;
+    getTasks?: (listId?: string) => Promise<any[]>;
+    addTask?: (title: string, notes?: string, listId?: string) => Promise<any>;
     integrationsConfig: IntegrationsConfig;
     accessToken: string | null;
     customSearchCx: string;
@@ -33,7 +36,18 @@ export interface UseGeminiLiveReturn {
     clearLogs: () => void;
 }
 
-export const useGeminiLive = ({ onNoteRemembered, onFileSaved, searchDriveFiles, readDriveFile, integrationsConfig, accessToken, customSearchCx }: UseGeminiLiveProps): UseGeminiLiveReturn => {
+export const useGeminiLive = ({ 
+    onNoteRemembered, 
+    onFileSaved, 
+    searchDriveFiles, 
+    readDriveFile, 
+    getTaskLists,
+    getTasks,
+    addTask,
+    integrationsConfig, 
+    accessToken, 
+    customSearchCx 
+}: UseGeminiLiveProps): UseGeminiLiveReturn => {
     const [connectionState, setConnectionState] = useState<ConnectionState>(ConnectionState.DISCONNECTED);
     const [isSpeaking, setIsSpeaking] = useState(false);
     const [volume, setVolume] = useState(0);
@@ -189,7 +203,7 @@ export const useGeminiLive = ({ onNoteRemembered, onFileSaved, searchDriveFiles,
                 }
             };
 
-            // Workspace Tools (Conditional)
+            // Workspace Tools
             const saveToWorkspaceFunction: FunctionDeclaration = {
                 name: "saveToWorkspace",
                 description: "Save generated content to a file in User-sama's local workspace.",
@@ -205,7 +219,7 @@ export const useGeminiLive = ({ onNoteRemembered, onFileSaved, searchDriveFiles,
 
             const searchGoogleDriveFunction: FunctionDeclaration = {
                 name: "searchGoogleDrive",
-                description: "Search for files in User-sama's Google Drive. Use this to find novels, proposals, or other documents.",
+                description: "Search for files in User-sama's Google Drive (Docs, PDFs, etc.). Use this to find novels, proposals, or other documents.",
                 parameters: {
                     type: Type.OBJECT,
                     properties: {
@@ -224,6 +238,38 @@ export const useGeminiLive = ({ onNoteRemembered, onFileSaved, searchDriveFiles,
                         fileId: { type: Type.STRING, description: "The ID of the file to read." }
                     },
                     required: ["fileId"]
+                }
+            };
+
+            // Tasks Tools
+            const listTaskListsFunction: FunctionDeclaration = {
+                name: "listTaskLists",
+                description: "Get all of User-sama's task lists (To-Do lists).",
+                parameters: { type: Type.OBJECT, properties: {} }
+            };
+
+            const listTasksFunction: FunctionDeclaration = {
+                name: "listTasks",
+                description: "Get tasks from a specific list (or default).",
+                parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                        listId: { type: Type.STRING, description: "The task list ID (optional, defaults to '@default')." }
+                    }
+                }
+            };
+
+            const addTaskFunction: FunctionDeclaration = {
+                name: "addTask",
+                description: "Add a new task to User-sama's To-Do list.",
+                parameters: {
+                    type: Type.OBJECT,
+                    properties: {
+                        title: { type: Type.STRING, description: "Title of the task." },
+                        notes: { type: Type.STRING, description: "Additional notes or description." },
+                        listId: { type: Type.STRING, description: "Target list ID (optional)." }
+                    },
+                    required: ["title"]
                 }
             };
 
@@ -317,6 +363,9 @@ export const useGeminiLive = ({ onNoteRemembered, onFileSaved, searchDriveFiles,
             if (integrationsConfig.workspace) {
                 toolList.push(searchGoogleDriveFunction);
                 toolList.push(readGoogleDriveFileFunction);
+                toolList.push(listTaskListsFunction);
+                toolList.push(listTasksFunction);
+                toolList.push(addTaskFunction);
             }
             if (integrationsConfig.youtube) toolList.push(searchYoutubeFunction);
             if (integrationsConfig.media) toolList.push(searchMusicFunction);
@@ -373,6 +422,7 @@ export const useGeminiLive = ({ onNoteRemembered, onFileSaved, searchDriveFiles,
                     - **MUSIC**: If User-sama asks for music, use 'searchMusic'.
                     - **OPENING TABS**: You can only open tabs if the 'openUrl' tool is available.
                     - **FILES**: You can read User-sama's novel/docs using 'searchGoogleDrive' and 'readGoogleDriveFile' IF AVAILABLE.
+                    - **TASKS**: You can manage User-sama's To-Do list using 'listTasks' and 'addTask' IF AVAILABLE.
                     - **MEMORY**: You can remember things using 'rememberNote'.
                     
                     CONTEXT FROM MEMORY:
@@ -381,7 +431,7 @@ export const useGeminiLive = ({ onNoteRemembered, onFileSaved, searchDriveFiles,
                     ${locationContext}
                     
                     ENABLED INTEGRATIONS:
-                    - Workspace (Drive/Docs): ${integrationsConfig.workspace ? 'ENABLED' : 'DISABLED'}
+                    - Workspace (Docs/Drive/Tasks): ${integrationsConfig.workspace ? 'ENABLED' : 'DISABLED'}
                     - YouTube: ${integrationsConfig.youtube ? 'ENABLED' : 'DISABLED'}
                     - Media (Music): ${integrationsConfig.media ? 'ENABLED' : 'DISABLED'}
                     - Notifications: ${integrationsConfig.notifications ? 'ENABLED' : 'DISABLED'}
@@ -442,6 +492,30 @@ export const useGeminiLive = ({ onNoteRemembered, onFileSaved, searchDriveFiles,
                                             result = content ? content.slice(0, 20000) : "Empty file or read error.";
                                         } else {
                                             result = "Drive read is disabled.";
+                                        }
+                                    } else if (fc.name === 'listTaskLists') {
+                                        if (integrationsConfig.workspace && getTaskLists) {
+                                            addLog('tool', `Listing Task Lists`);
+                                            const lists = await getTaskLists();
+                                            result = JSON.stringify(lists.map((l: any) => ({ id: l.id, title: l.title })));
+                                        } else {
+                                            result = "Task access is disabled.";
+                                        }
+                                    } else if (fc.name === 'listTasks') {
+                                        if (integrationsConfig.workspace && getTasks) {
+                                            addLog('tool', `Listing Tasks from ${args.listId || 'default'}`);
+                                            const tasks = await getTasks(args.listId);
+                                            result = JSON.stringify(tasks.map((t: any) => ({ id: t.id, title: t.title, notes: t.notes, status: t.status })));
+                                        } else {
+                                            result = "Task access is disabled.";
+                                        }
+                                    } else if (fc.name === 'addTask') {
+                                        if (integrationsConfig.workspace && addTask) {
+                                            addLog('tool', `Adding Task: ${args.title}`);
+                                            const task = await addTask(args.title, args.notes, args.listId);
+                                            result = task ? `Task '${task.title}' added successfully!` : "Failed to add task.";
+                                        } else {
+                                            result = "Task access is disabled.";
                                         }
                                     } else if (fc.name === 'openUrl') {
                                         if (integrationsConfig.openTabs) {
@@ -599,7 +673,7 @@ export const useGeminiLive = ({ onNoteRemembered, onFileSaved, searchDriveFiles,
             setConnectionState(ConnectionState.ERROR);
             disconnect();
         }
-    }, [connectionState, disconnect, addLog, onNoteRemembered, onFileSaved, searchDriveFiles, readDriveFile, integrationsConfig, userLocation, accessToken, customSearchCx]);
+    }, [connectionState, disconnect, addLog, onNoteRemembered, onFileSaved, searchDriveFiles, readDriveFile, getTaskLists, getTasks, addTask, integrationsConfig, userLocation, accessToken, customSearchCx]);
 
     // Volume visualizer
     useEffect(() => {
