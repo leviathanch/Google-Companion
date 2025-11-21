@@ -706,17 +706,20 @@ export const useGeminiLive = ({
 
     // Send Text Message to Live Session
     const sendTextMessage = useCallback((text: string) => {
-        if (sessionPromiseRef.current) {
-            sessionPromiseRef.current.then(session => {
-                session.send({
-                    clientContent: {
-                        turns: [{ role: 'user', parts: [{ text }] }],
-                        turnComplete: true
-                    }
-                });
-                addLog('user', text);
-            });
+        if (!sessionPromiseRef.current) {
+            addLog('error', 'Cannot send message: Session not connected');
+            return;
         }
+        
+        sessionPromiseRef.current.then(session => {
+            session.send({
+                clientContent: {
+                    turns: [{ role: 'user', parts: [{ text }] }],
+                    turnComplete: true
+                }
+            });
+            addLog('user', text);
+        });
     }, [addLog]);
 
     // Volume visualizer

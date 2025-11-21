@@ -650,7 +650,8 @@ const App = () => {
                                  href={`https://www.google.com/search?q=${encodeURIComponent(item.query)}`} 
                                  target="_blank" 
                                  rel="noopener noreferrer"
-                                 className="text-[10px] text-blue-400 hover:text-blue-300 flex items-center gap-1 hover:underline"
+                                 className="flex items-center gap-1 text-[10px] text-indigo-400 hover:underline"
+                                 title="Open in Google"
                                >
                                    <ExternalLink size={10} /> Open in Google (Personalized)
                                </a>
@@ -853,23 +854,32 @@ const App = () => {
                   </button>
 
                   {isTextMode ? (
-                      <div className="flex items-center gap-2 bg-slate-900/80 backdrop-blur-xl p-2 rounded-2xl border border-white/10 shadow-2xl w-80">
-                          <input
-                              type="text"
-                              value={textInput}
-                              onChange={(e) => setTextInput(e.target.value)}
-                              onKeyDown={(e) => { if(e.key === 'Enter' && textInput.trim()) { sendTextMessage(textInput); setTextInput(''); } }}
-                              placeholder="Type a message..."
-                              className="flex-1 bg-transparent border-none focus:ring-0 text-white placeholder:text-slate-500 text-sm px-2 outline-none"
-                              autoFocus
-                          />
-                          <button
-                              onClick={() => { if(textInput.trim()) { sendTextMessage(textInput); setTextInput(''); } }}
-                              className="p-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl transition-colors"
+                      connectionState === ConnectionState.CONNECTED ? (
+                          <div className="flex items-center gap-2 bg-slate-900/80 backdrop-blur-xl p-2 rounded-2xl border border-white/10 shadow-2xl w-80">
+                              <input
+                                  type="text"
+                                  value={textInput}
+                                  onChange={(e) => setTextInput(e.target.value)}
+                                  onKeyDown={(e) => { if(e.key === 'Enter' && textInput.trim()) { sendTextMessage(textInput); setTextInput(''); } }}
+                                  placeholder="Type a message..."
+                                  className="flex-1 bg-transparent border-none focus:ring-0 text-white placeholder:text-slate-500 text-sm px-2 outline-none"
+                                  autoFocus
+                              />
+                              <button
+                                  onClick={() => { if(textInput.trim()) { sendTextMessage(textInput); setTextInput(''); } }}
+                                  className="p-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl transition-colors"
+                              >
+                                  <Send size={16} />
+                              </button>
+                          </div>
+                      ) : (
+                          <button 
+                              onClick={handleToggleConnection}
+                              className="bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 px-6 rounded-full shadow-[0_0_40px_rgba(79,70,229,0.4)] transition-all duration-300 flex items-center gap-2 border border-white/10 animate-in fade-in slide-in-from-bottom-4"
                           >
-                              <Send size={16} />
+                              <MessageSquare size={20} /> Start Chat
                           </button>
-                      </div>
+                      )
                   ) : (
                       <div className="flex flex-col items-center gap-5">
                           <button onClick={handleToggleConnection} disabled={connectionState === ConnectionState.CONNECTING} className={`group relative flex items-center justify-center w-16 h-16 rounded-full shadow-[0_0_40px_rgba(0,0,0,0.3)] transition-all duration-300 transform hover:scale-105 ${connectionState === ConnectionState.CONNECTED ? 'bg-red-500 hover:bg-red-600 text-white' : 'bg-indigo-600 hover:bg-indigo-500 text-white'} disabled:opacity-50 border border-white/10`}>
