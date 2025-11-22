@@ -7,6 +7,7 @@ import { Mic, MicOff, Search, AlertCircle, ExternalLink, LayoutGrid, X, Clock, C
 import { Avatar3D } from './components/Avatar3D';
 import { Loader } from './components/Loader';
 import { SettingsModal } from './components/SettingsModal';
+import { YouTubePlayer } from './components/YouTubePlayer';
 import { useGeminiLive } from './hooks/useGeminiLive';
 import { useGoogleDrive } from './hooks/useGoogleDrive';
 import { useRemoteStorage, SearchHistoryItem } from './hooks/useRemoteStorage';
@@ -571,22 +572,11 @@ const App = () => {
 
       {/* MUSIC PLAYER */}
       {musicState && (
-          <div className="absolute bottom-32 left-1/2 transform -translate-x-1/2 z-30 bg-black rounded-2xl overflow-hidden shadow-2xl border border-red-500/30 w-80">
-              <div className="bg-red-900/80 p-2 flex justify-between items-center">
-                  <span className="text-xs text-white font-bold truncate px-2">{musicState.value}</span>
-                  <button onClick={() => setMusicState(null)} className="text-white"><X size={14} /></button>
-              </div>
-              <div className="aspect-video">
-                  <iframe 
-                      src={musicState.type === 'id' 
-                          ? `https://www.youtube.com/embed/${musicState.value}?autoplay=1`
-                          : `https://www.youtube.com/embed?listType=search&list=${encodeURIComponent(musicState.value)}&autoplay=1`
-                      } 
-                      className="w-full h-full" 
-                      allow="autoplay" 
-                  />
-              </div>
-          </div>
+          <YouTubePlayer 
+            videoId={musicState.type === 'id' ? musicState.value : undefined}
+            searchQuery={musicState.type === 'query' ? musicState.value : undefined}
+            onClose={() => setMusicState(null)}
+          />
       )}
 
       {/* API Config & Client ID Modals (Omitted for brevity, same as before) */}
