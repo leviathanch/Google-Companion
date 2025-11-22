@@ -66,6 +66,11 @@ export interface ChatMessage {
     timestamp: Date;
 }
 
+export interface MusicState {
+    type: 'id' | 'query';
+    value: string;
+}
+
 declare global {
     interface Window {
         google: any;

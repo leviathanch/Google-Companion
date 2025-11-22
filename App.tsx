@@ -10,7 +10,7 @@ import { SettingsModal } from './components/SettingsModal';
 import { useGeminiLive } from './hooks/useGeminiLive';
 import { useGoogleDrive } from './hooks/useGoogleDrive';
 import { useRemoteStorage, SearchHistoryItem } from './hooks/useRemoteStorage';
-import { ConnectionState, GroundingChunk, GroundingMetadata, Memory, WorkspaceFile, IntegrationsConfig, ChatMessage } from './types';
+import { ConnectionState, GroundingChunk, GroundingMetadata, Memory, WorkspaceFile, IntegrationsConfig, ChatMessage, MusicState } from './types';
 
 const DEFAULT_CUSTOM_SEARCH_CX = "05458f6c63b8b40ac";
 const GIGGLE_URL = "https://storage.googleapis.com/3d_model/audio/giggle.wav";
@@ -19,7 +19,7 @@ const App = () => {
   // --- STATES ---
   
   // Google Drive / Auth
-  const { login, logout, user: googleUser, accessToken, isSyncing, clientId, setClientId, searchDriveFiles, readDriveFile, getTaskLists, getTasks, addTask, requestDrivePermissions, requestSearchPermissions } = useGoogleDrive();
+  const { login, logout, user: googleUser, accessToken, isSyncing, clientId, setClientId, searchDriveFiles, readDriveFile, getTaskLists, getTasks, addTask, requestDrivePermissions, requestSearchPermissions, requestYoutubePermissions } = useGoogleDrive();
   const [isClientIdModalOpen, setIsClientIdModalOpen] = useState(false);
   const [tempClientId, setTempClientId] = useState("");
   const [originCopied, setOriginCopied] = useState(false);
@@ -72,7 +72,7 @@ const App = () => {
   const [currentExpression, setCurrentExpression] = useState<string>("neutral");
   
   // Music Player & Dance State
-  const [musicTrack, setMusicTrack] = useState<string | null>(null);
+  const [musicState, setMusicState] = useState<MusicState | null>(null);
   const [debugDance, setDebugDance] = useState(false);
 
   // Debug
@@ -136,6 +136,10 @@ const App = () => {
       }
       if (key === 'personalizedSearch' && !integrations.personalizedSearch && accessToken) {
           const granted = await requestSearchPermissions();
+          if (!granted) return;
+      }
+      if ((key === 'youtube' || key === 'media') && !integrations.youtube && !integrations.media && accessToken) {
+          const granted = await requestYoutubePermissions();
           if (!granted) return;
       }
 
@@ -209,7 +213,6 @@ const App = () => {
   const handleExpressionChange = useCallback((expression: string) => {
       setCurrentExpression(expression);
       if (expression !== 'neutral') {
-          // Auto-reset expression after 1 second (as requested)
           setTimeout(() => setCurrentExpression('neutral'), 1000);
       }
   }, []);
@@ -287,7 +290,9 @@ const App = () => {
   const deleteFile = (id: string) => setFiles(prev => prev.filter(f => f.id !== id));
   const clearFiles = () => { setFiles([]); localStorage.removeItem('gem_workspace_files'); };
 
-  const handlePlayMusic = useCallback((query: string) => { setMusicTrack(query); }, []);
+  const handlePlayMusic = useCallback((val: string, type: 'id' | 'query' = 'query') => { 
+      setMusicState({ type, value: val }); 
+  }, []);
 
   const handleChatUpdate = useCallback((message: ChatMessage) => {
       setChatHistory(prev => [...prev, message]);
@@ -309,7 +314,7 @@ const App = () => {
       integrationsConfig: integrations,
       accessToken: accessToken,
       customSearchCx: DEFAULT_CUSTOM_SEARCH_CX,
-      isMusicPlaying: !!musicTrack // Pass music state to gate mic
+      isMusicPlaying: !!musicState // Pass music state to gate mic
   });
   
   const handleToggleConnection = async () => {
@@ -394,7 +399,7 @@ const App = () => {
              audioAnalyser={audioAnalyser} 
              gesture={currentGesture} 
              expression={currentExpression}
-             isDancing={!!musicTrack || debugDance} 
+             isDancing={!!musicState || debugDance} 
              onTouch={handleAvatarTouch} 
            />
         </Suspense>
@@ -512,7 +517,9 @@ const App = () => {
                                           </div>
                                       </div>
                                       <div className="flex items-center gap-2">
-                                          <a href={`https://www.google.com/search?q=${encodeURIComponent(item.query)}`} target="_blank" rel="noopener noreferrer" title="Open in Google" className="text-slate-600 hover:text-blue-400"><ExternalLink size={12}/></a>
+                                          <div title="Open in Google">
+                                            <a href={`https://www.google.com/search?q=${encodeURIComponent(item.query)}`} target="_blank" rel="noopener noreferrer" className="text-slate-600 hover:text-blue-400"><ExternalLink size={12}/></a>
+                                          </div>
                                           <button onClick={() => handlePinItem('search', s)} title="Pin to Memory" className="text-slate-600 hover:text-pink-400"><Pin size={12} /></button>
                                       </div>
                                   </div>
@@ -563,10 +570,22 @@ const App = () => {
       <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} config={integrations} onToggle={toggleIntegration} />
 
       {/* MUSIC PLAYER */}
-      {musicTrack && (
+      {musicState && (
           <div className="absolute bottom-32 left-1/2 transform -translate-x-1/2 z-30 bg-black rounded-2xl overflow-hidden shadow-2xl border border-red-500/30 w-80">
-              <div className="bg-red-900/80 p-2 flex justify-between items-center"><span className="text-xs text-white font-bold truncate px-2">{musicTrack}</span><button onClick={() => setMusicTrack(null)} className="text-white"><X size={14} /></button></div>
-              <div className="aspect-video"><iframe src={`https://www.youtube.com/embed?listType=search&list=${encodeURIComponent(musicTrack)}&autoplay=1`} className="w-full h-full" allow="autoplay" /></div>
+              <div className="bg-red-900/80 p-2 flex justify-between items-center">
+                  <span className="text-xs text-white font-bold truncate px-2">{musicState.value}</span>
+                  <button onClick={() => setMusicState(null)} className="text-white"><X size={14} /></button>
+              </div>
+              <div className="aspect-video">
+                  <iframe 
+                      src={musicState.type === 'id' 
+                          ? `https://www.youtube.com/embed/${musicState.value}?autoplay=1`
+                          : `https://www.youtube.com/embed?listType=search&list=${encodeURIComponent(musicState.value)}&autoplay=1`
+                      } 
+                      className="w-full h-full" 
+                      allow="autoplay" 
+                  />
+              </div>
           </div>
       )}
 
@@ -616,12 +635,19 @@ const App = () => {
         </div>
       )}
 
-      {/* Debug Log (Omitted, same as before) */}
+      {/* Debug Log */}
       <button onClick={() => setIsDebugOpen(!isDebugOpen)} className="absolute bottom-6 right-6 pointer-events-auto bg-slate-900/40 p-3 rounded-full text-slate-400 hover:text-indigo-400 z-40"><Bug size={18} /></button>
       {isDebugOpen && (
           <div className="absolute bottom-20 right-6 w-[500px] h-96 bg-slate-950/95 border border-white/10 rounded-xl z-40 flex flex-col font-mono text-xs">
               <div className="p-2 border-b border-white/10 flex justify-between bg-slate-900/50"><span className="text-slate-300 font-bold">Logs</span><div className="flex gap-2"><button onClick={() => setDebugDance(!debugDance)} className="text-yellow-400"><Music size={14}/></button><button onClick={clearLogs} className="text-red-400">Clear</button><button onClick={() => setIsDebugOpen(false)}>X</button></div></div>
-              <div ref={debugScrollRef} className="flex-1 overflow-y-auto p-2 space-y-1">{logs.map((l, i) => <div key={i} className="text-slate-300"><span className="text-slate-500">[{l.time}]</span> <span className="text-blue-400">{l.type}</span> {l.message}</div>)}</div>
+              <div ref={debugScrollRef} className="flex-1 overflow-y-auto p-2 space-y-1">
+                  {logs.map((l, i) => (
+                      <div key={i} className="text-slate-300">
+                          <span className="text-slate-500">[{l.time}]</span> <span className="text-blue-400">{l.type}</span> {l.message}
+                          {l.data && <div className="text-[10px] text-slate-500 bg-black/30 p-1 rounded mt-1 overflow-x-auto whitespace-pre-wrap break-all">{typeof l.data === 'string' ? l.data : JSON.stringify(l.data, null, 2)}</div>}
+                      </div>
+                  ))}
+              </div>
           </div>
       )}
     </div>

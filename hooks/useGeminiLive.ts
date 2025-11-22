@@ -14,7 +14,7 @@ export interface LogEntry {
 export interface UseGeminiLiveProps {
     onNoteRemembered?: (note: string) => void;
     onFileSaved?: (fileName: string, content: string) => void;
-    onPlayMusic?: (query: string) => void;
+    onPlayMusic?: (val: string, type: 'id' | 'query') => void;
     onChatUpdate?: (message: ChatMessage) => void;
     onExpressionChange?: (expression: string) => void;
     searchDriveFiles?: (query: string) => Promise<any[]>;
@@ -243,9 +243,9 @@ export const useGeminiLive = ({
             const listFilesFunction: FunctionDeclaration = { name: "listFiles", description: "List workspace files.", parameters: { type: Type.OBJECT, properties: {} } };
             const readFileFunction: FunctionDeclaration = { name: "readFile", description: "Read workspace file.", parameters: { type: Type.OBJECT, properties: { fileName: { type: Type.STRING } }, required: ["fileName"] } };
             const openUrlFunction: FunctionDeclaration = { name: "openUrl", description: "Open URL.", parameters: { type: Type.OBJECT, properties: { url: { type: Type.STRING } }, required: ["url"] } };
-            const searchYoutubeFunction: FunctionDeclaration = { name: "searchYoutube", description: "Search for a video on YouTube. Returns a list of candidates.", parameters: { type: Type.OBJECT, properties: { query: { type: Type.STRING } }, required: ["query"] } };
-            const searchMusicFunction: FunctionDeclaration = { name: "searchMusic", description: "Search for music on YouTube Music. Returns a list of candidates.", parameters: { type: Type.OBJECT, properties: { query: { type: Type.STRING } }, required: ["query"] } };
-            const playMusicFunction: FunctionDeclaration = { name: "playMusic", description: "Play a specific video/song on the embedded player.", parameters: { type: Type.OBJECT, properties: { query: { type: Type.STRING } }, required: ["query"] } };
+            const searchYoutubeFunction: FunctionDeclaration = { name: "searchYoutube", description: "Search for a video on YouTube. Returns a list of candidates with videoId.", parameters: { type: Type.OBJECT, properties: { query: { type: Type.STRING } }, required: ["query"] } };
+            const searchMusicFunction: FunctionDeclaration = { name: "searchMusic", description: "Search for music on YouTube Music. Returns a list of candidates with videoId.", parameters: { type: Type.OBJECT, properties: { query: { type: Type.STRING } }, required: ["query"] } };
+            const playMusicFunction: FunctionDeclaration = { name: "playMusic", description: "Play a specific video/song. Prefer using videoId if available from search results.", parameters: { type: Type.OBJECT, properties: { videoId: { type: Type.STRING }, query: { type: Type.STRING } } } };
             const sendNotificationFunction: FunctionDeclaration = { name: "sendNotification", description: "Send notification.", parameters: { type: Type.OBJECT, properties: { title: { type: Type.STRING }, body: { type: Type.STRING } }, required: ["title", "body"] } };
             const searchWebFunction: FunctionDeclaration = { name: "searchWeb", description: "Personalized Search.", parameters: { type: Type.OBJECT, properties: { query: { type: Type.STRING } }, required: ["query"] } };
             const setExpressionFunction: FunctionDeclaration = { name: "setExpression", description: "Set facial expression.", parameters: { type: Type.OBJECT, properties: { expression: { type: Type.STRING, enum: ["neutral", "happy", "sad", "angry", "surprised"] } }, required: ["expression"] } };
@@ -286,7 +286,7 @@ export const useGeminiLive = ({
                     - MEDIA PLAYBACK:
                       1. If asked to play something general, use 'searchYoutube' or 'searchMusic' first to find candidates.
                       2. Pick the best match from the results.
-                      3. Use 'playMusic' with the exact title/candidate.
+                      3. Use 'playMusic' with the 'videoId' from the search results.
                     - INFORMATION: Use 'googleSearch' (or 'searchWeb') for facts.
                     - MEMORY: Use Memory and Location context.
                     - WORKSPACE: Use Drive/Tasks tools if available.
@@ -399,32 +399,51 @@ export const useGeminiLive = ({
                                             result = "Opened";
                                         } else result = "Disabled";
                                     } else if (fc.name === 'searchYoutube') {
-                                        if (integrationsConfig.personalizedSearch && accessToken && customSearchCx) {
-                                            const res = await fetch(`https://customsearch.googleapis.com/customsearch/v1?q=${encodeURIComponent(args.query + " site:youtube.com")}&cx=${customSearchCx}`, {
+                                        // Use YouTube Data API v3
+                                        if (accessToken) {
+                                            // Added videoEmbeddable=true to ensure videos can be played in our player
+                                            const res = await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=5&q=${encodeURIComponent(args.query)}&type=video&videoEmbeddable=true&key=${process.env.API_KEY}`, {
                                                 headers: { Authorization: `Bearer ${accessToken}` }
                                             });
-                                            const data = await res.json();
-                                            if (data.items) {
-                                                result = JSON.stringify(data.items.slice(0, 5).map((i: any) => ({ title: i.title, link: i.link })));
-                                            } else result = "No results found via Custom Search.";
+                                            if (!res.ok) {
+                                                const errText = await res.text();
+                                                addLog('error', `Youtube API Failed (${res.status})`, errText);
+                                                result = `Error ${res.status}: Check logs.`;
+                                            } else {
+                                                const data = await res.json();
+                                                if (data.items) {
+                                                    result = JSON.stringify(data.items.map((i: any) => ({ title: i.snippet.title, videoId: i.id.videoId })));
+                                                } else result = "No results found.";
+                                            }
                                         } else {
-                                            result = `Found video: https://www.youtube.com/results?search_query=${encodeURIComponent(args.query)}`;
+                                            result = "Error: YouTube integration requires Google Sign-In with permissions.";
                                         }
                                     } else if (fc.name === 'searchMusic') {
-                                        if (integrationsConfig.personalizedSearch && accessToken && customSearchCx) {
-                                            const res = await fetch(`https://customsearch.googleapis.com/customsearch/v1?q=${encodeURIComponent(args.query + " site:music.youtube.com")}&cx=${customSearchCx}`, {
+                                        // Use YouTube Data API v3 with 'music' query augmentation
+                                        if (accessToken) {
+                                            // Added videoEmbeddable=true
+                                            const res = await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=5&q=${encodeURIComponent(args.query + " music")}&type=video&videoCategoryId=10&videoEmbeddable=true&key=${process.env.API_KEY}`, {
                                                 headers: { Authorization: `Bearer ${accessToken}` }
                                             });
-                                            const data = await res.json();
-                                            if (data.items) {
-                                                result = JSON.stringify(data.items.slice(0, 5).map((i: any) => ({ title: i.title, link: i.link })));
-                                            } else result = "No results found.";
+                                            if (!res.ok) {
+                                                const errText = await res.text();
+                                                addLog('error', `Music API Failed (${res.status})`, errText);
+                                                result = `Error ${res.status}: Check logs.`;
+                                            } else {
+                                                const data = await res.json();
+                                                if (data.items) {
+                                                    result = JSON.stringify(data.items.map((i: any) => ({ title: i.snippet.title, videoId: i.id.videoId })));
+                                                } else result = "No results found.";
+                                            }
                                         } else {
-                                            result = `Found music: https://music.youtube.com/search?q=${encodeURIComponent(args.query)}`;
+                                            result = "Error: Music integration requires Google Sign-In with permissions.";
                                         }
                                     } else if (fc.name === 'playMusic') {
                                         if (integrationsConfig.media) {
-                                            if (onPlayMusic) onPlayMusic(args.query);
+                                            if (onPlayMusic) {
+                                                if (args.videoId) onPlayMusic(args.videoId, 'id');
+                                                else onPlayMusic(args.query, 'query');
+                                            }
                                             result = "Playing music";
                                         } else result = "Disabled";
                                     } else if (fc.name === 'sendNotification') {
@@ -433,18 +452,25 @@ export const useGeminiLive = ({
                                             result = "Sent";
                                         } else result = "Disabled";
                                     } else if (fc.name === 'searchWeb') {
-                                        const res = await fetch(`https://customsearch.googleapis.com/customsearch/v1?q=${encodeURIComponent(args.query)}&cx=${customSearchCx}`, {
+                                        // Added 'key' param to URL to fix 403 Forbidden errors
+                                        const res = await fetch(`https://customsearch.googleapis.com/customsearch/v1?q=${encodeURIComponent(args.query)}&cx=${customSearchCx}&key=${process.env.API_KEY}`, {
                                             headers: { Authorization: `Bearer ${accessToken}` }
                                         });
-                                        const data = await res.json();
-                                        if (data.items) {
-                                            result = JSON.stringify(data.items.slice(0, 5).map((i: any) => ({ title: i.title, link: i.link, snippet: i.snippet })));
-                                            const mockMetadata: GroundingMetadata = {
-                                                webSearchQueries: [args.query],
-                                                groundingChunks: data.items.slice(0, 5).map((i: any) => ({ web: { uri: i.link, title: i.title } }))
-                                            };
-                                            setGroundingMetadata(mockMetadata);
-                                        } else result = "No results";
+                                        if (!res.ok) {
+                                            const errText = await res.text();
+                                            addLog('error', `Web Search Failed (${res.status})`, errText);
+                                            result = `API Error ${res.status}: Check logs.`;
+                                        } else {
+                                            const data = await res.json();
+                                            if (data.items) {
+                                                result = JSON.stringify(data.items.slice(0, 5).map((i: any) => ({ title: i.title, link: i.link, snippet: i.snippet })));
+                                                const mockMetadata: GroundingMetadata = {
+                                                    webSearchQueries: [args.query],
+                                                    groundingChunks: data.items.slice(0, 5).map((i: any) => ({ web: { uri: i.link, title: i.title } }))
+                                                };
+                                                setGroundingMetadata(mockMetadata);
+                                            } else result = "No results";
+                                        }
                                     } else if (fc.name === 'setExpression') {
                                         if (onExpressionChange) onExpressionChange(args.expression);
                                         result = "Expression set";

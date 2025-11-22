@@ -10,6 +10,7 @@ const DEFAULT_CLIENT_ID = "210614270256-ppo1vmagl3roimn5duo8ma98ev6fla6d.apps.go
 const BASE_SCOPES = 'https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email openid';
 const DRIVE_SCOPES = 'https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/tasks';
 const SEARCH_SCOPES = 'https://www.googleapis.com/auth/cse';
+const YOUTUBE_SCOPES = 'https://www.googleapis.com/auth/youtube.readonly';
 
 const TOKEN_STORAGE_KEY = 'gem_google_access_token';
 const TOKEN_EXPIRY_KEY = 'gem_google_token_expiry';
@@ -294,6 +295,7 @@ export const useGoogleDrive = () => {
 
     const requestDrivePermissions = useCallback(() => requestPermissions(DRIVE_SCOPES), [requestPermissions]);
     const requestSearchPermissions = useCallback(() => requestPermissions(SEARCH_SCOPES), [requestPermissions]);
+    const requestYoutubePermissions = useCallback(() => requestPermissions(YOUTUBE_SCOPES), [requestPermissions]);
 
     return {
         login,
@@ -311,6 +313,7 @@ export const useGoogleDrive = () => {
         addTask,
         requestDrivePermissions,
         requestSearchPermissions,
+        requestYoutubePermissions,
         clientId,
         setClientId
     };
