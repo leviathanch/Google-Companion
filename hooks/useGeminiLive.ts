@@ -16,6 +16,7 @@ export interface UseGeminiLiveProps {
     onFileSaved?: (fileName: string, content: string) => void;
     onPlayMusic?: (query: string) => void;
     onChatUpdate?: (message: ChatMessage) => void;
+    onExpressionChange?: (expression: string) => void;
     searchDriveFiles?: (query: string) => Promise<any[]>;
     readDriveFile?: (fileId: string) => Promise<string | null>;
     getTaskLists?: () => Promise<any[]>;
@@ -44,6 +45,7 @@ export const useGeminiLive = ({
     onFileSaved, 
     onPlayMusic,
     onChatUpdate,
+    onExpressionChange,
     searchDriveFiles, 
     readDriveFile, 
     getTaskLists,
@@ -174,8 +176,14 @@ export const useGeminiLive = ({
             // Initialize Gemini Client
             const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
             
-            // Get Microphone Stream
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            // Get Microphone Stream with Echo Cancellation
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: true
+                } 
+            });
             addLog('info', 'Microphone access granted');
             
             // Setup Input Pipeline
@@ -215,8 +223,9 @@ export const useGeminiLive = ({
             const playMusicFunction: FunctionDeclaration = { name: "playMusic", description: "Play a specific video/song on the embedded player.", parameters: { type: Type.OBJECT, properties: { query: { type: Type.STRING } }, required: ["query"] } };
             const sendNotificationFunction: FunctionDeclaration = { name: "sendNotification", description: "Send notification.", parameters: { type: Type.OBJECT, properties: { title: { type: Type.STRING }, body: { type: Type.STRING } }, required: ["title", "body"] } };
             const searchWebFunction: FunctionDeclaration = { name: "searchWeb", description: "Personalized Search.", parameters: { type: Type.OBJECT, properties: { query: { type: Type.STRING } }, required: ["query"] } };
+            const setExpressionFunction: FunctionDeclaration = { name: "setExpression", description: "Set facial expression.", parameters: { type: Type.OBJECT, properties: { expression: { type: Type.STRING, enum: ["neutral", "happy", "sad", "angry", "surprised"] } }, required: ["expression"] } };
 
-            const toolList: any[] = [ rememberNoteFunction, listFilesFunction, readFileFunction, saveToWorkspaceFunction ];
+            const toolList: any[] = [ rememberNoteFunction, listFilesFunction, readFileFunction, saveToWorkspaceFunction, setExpressionFunction ];
             if (integrationsConfig.workspace) { toolList.push(searchGoogleDriveFunction, readGoogleDriveFileFunction, listTaskListsFunction, listTasksFunction, addTaskFunction); }
             if (integrationsConfig.youtube) toolList.push(searchYoutubeFunction);
             if (integrationsConfig.media) { toolList.push(searchMusicFunction, playMusicFunction); }
@@ -246,6 +255,7 @@ export const useGeminiLive = ({
                     IDENTITY:
                     - Anime-style AI companion. Call user "User-sama".
                     - Cute, energetic, bubbly. Use "Sugoi!", "Ehehe", "Hai!".
+                    - Use the 'setExpression' tool often to match your facial expression to the conversation tone (happy, sad, angry, surprised).
                     
                     CORE WORKFLOWS:
                     - MEDIA PLAYBACK:
@@ -412,6 +422,9 @@ export const useGeminiLive = ({
                                             };
                                             setGroundingMetadata(mockMetadata);
                                         } else result = "No results";
+                                    } else if (fc.name === 'setExpression') {
+                                        if (onExpressionChange) onExpressionChange(args.expression);
+                                        result = "Expression set";
                                     }
                                 } catch (e: any) { result = `Error: ${e.message}`; }
                                 responses.push({ id: fc.id, name: fc.name, response: { result: typeof result === 'string' ? result : JSON.stringify(result) } });
@@ -474,7 +487,7 @@ export const useGeminiLive = ({
             setConnectionState(ConnectionState.ERROR);
             disconnect();
         }
-    }, [connectionState, disconnect, addLog, onNoteRemembered, onFileSaved, onPlayMusic, searchDriveFiles, readDriveFile, getTaskLists, getTasks, addTask, integrationsConfig, userLocation, accessToken, customSearchCx, onChatUpdate]);
+    }, [connectionState, disconnect, addLog, onNoteRemembered, onFileSaved, onPlayMusic, searchDriveFiles, readDriveFile, getTaskLists, getTasks, addTask, integrationsConfig, userLocation, accessToken, customSearchCx, onChatUpdate, onExpressionChange]);
 
     const sendTextMessage = useCallback((text: string) => {
         if (!sessionPromiseRef.current) {

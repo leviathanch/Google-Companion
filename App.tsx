@@ -67,8 +67,9 @@ const App = () => {
       personalizedSearch: false
   });
 
-  // Animation Gestures
+  // Animation Gestures & Expressions
   const [currentGesture, setCurrentGesture] = useState<string | null>(null);
+  const [currentExpression, setCurrentExpression] = useState<string>("neutral");
   
   // Music Player & Dance State
   const [musicTrack, setMusicTrack] = useState<string | null>(null);
@@ -205,6 +206,10 @@ const App = () => {
       setTimeout(() => setCurrentGesture(null), 100); 
   }, []);
 
+  const handleExpressionChange = useCallback((expression: string) => {
+      setCurrentExpression(expression);
+  }, []);
+
   const handleAvatarTouch = useCallback((bodyPart: string) => {
       if (bodyPart === 'chest') {
           triggerGesture('HeadShake');
@@ -291,6 +296,7 @@ const App = () => {
       onFileSaved: handleFileSaved,
       onPlayMusic: handlePlayMusic,
       onChatUpdate: handleChatUpdate,
+      onExpressionChange: handleExpressionChange,
       searchDriveFiles: searchDriveFiles,
       readDriveFile: readDriveFile,
       getTaskLists: getTaskLists,
@@ -382,6 +388,7 @@ const App = () => {
              isSpeaking={isSpeaking} 
              audioAnalyser={audioAnalyser} 
              gesture={currentGesture} 
+             expression={currentExpression}
              isDancing={!!musicTrack || debugDance} 
              onTouch={handleAvatarTouch} 
            />
@@ -494,8 +501,13 @@ const App = () => {
                           <div className="bg-black/20 px-3 py-3 space-y-2 border-t border-white/5">
                               {item.sources.map((s, i) => (
                                   <div key={i} className="flex items-center justify-between text-xs text-slate-300">
-                                      <a href={s.uri} target="_blank" rel="noopener noreferrer" className="truncate flex-1 hover:text-indigo-400">{s.title}</a>
-                                      <button onClick={() => handlePinItem('search', s)} className="ml-2 text-slate-600 hover:text-pink-400"><Pin size={12} /></button>
+                                      <div className="flex items-center gap-2 truncate flex-1">
+                                          <a href={s.uri} target="_blank" rel="noopener noreferrer" className="truncate hover:text-indigo-400 flex-1">{s.title}</a>
+                                      </div>
+                                      <div className="flex items-center gap-2">
+                                          <a href={`https://www.google.com/search?q=${encodeURIComponent(item.query)}`} target="_blank" rel="noopener noreferrer" title="Open in Google" className="text-slate-600 hover:text-blue-400"><ExternalLink size={12}/></a>
+                                          <button onClick={() => handlePinItem('search', s)} title="Pin to Memory" className="text-slate-600 hover:text-pink-400"><Pin size={12} /></button>
+                                      </div>
                                   </div>
                               ))}
                           </div>
