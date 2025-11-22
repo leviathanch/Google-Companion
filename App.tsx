@@ -14,7 +14,6 @@ import { useRemoteStorage, SearchHistoryItem } from './hooks/useRemoteStorage';
 import { ConnectionState, GroundingChunk, GroundingMetadata, Memory, WorkspaceFile, IntegrationsConfig, ChatMessage, MusicState, NotificationItem } from './types';
 
 const DEFAULT_CUSTOM_SEARCH_CX = "05458f6c63b8b40ac";
-const DEFAULT_GOOGLE_API_KEY = "AIzaSyAs_pJYYAUZS8wID94DA7TErwuzkKDksao";
 const GIGGLE_URL = "https://storage.googleapis.com/3d_model/audio/giggle.wav";
 
 const App = () => {
@@ -36,7 +35,9 @@ const App = () => {
       fetchNotifications, markNotificationRead
   } = useRemoteStorage(accessToken);
   const [tempApiUrl, setTempApiUrl] = useState("");
-  const [googleApiKey, setGoogleApiKey] = useState(localStorage.getItem('gem_google_api_key') || DEFAULT_GOOGLE_API_KEY);
+  
+  // API Key: Prioritize LocalStorage override, then Environment Variable
+  const [googleApiKey, setGoogleApiKey] = useState(localStorage.getItem('gem_google_api_key') || process.env.API_KEY || "");
   const [tempGoogleApiKey, setTempGoogleApiKey] = useState("");
 
   // Memory
@@ -369,6 +370,11 @@ const App = () => {
       }
   };
 
+  const resetApp = () => {
+      localStorage.clear();
+      window.location.reload();
+  };
+
   // --- HOOK INIT ---
   const { connect, disconnect, sendTextMessage, connectionState, isSpeaking, volume, groundingMetadata, audioAnalyser, logs, clearLogs } = useGeminiLive({
       onNoteRemembered: handleNoteRemembered,
@@ -384,7 +390,8 @@ const App = () => {
       integrationsConfig: integrations,
       accessToken: accessToken,
       customSearchCx: DEFAULT_CUSTOM_SEARCH_CX,
-      isMusicPlaying: !!musicState, // Pass music state to gate mic
+      // Gate Mic: When Music is Playing OR Text Mode is Active
+      isMusicPlaying: !!musicState || isTextMode,
       apiKey: googleApiKey
   });
   
@@ -720,7 +727,7 @@ const App = () => {
       <button onClick={() => setIsDebugOpen(!isDebugOpen)} className="absolute bottom-6 right-6 pointer-events-auto bg-slate-900/40 p-3 rounded-full text-slate-400 hover:text-indigo-400 z-40"><Bug size={18} /></button>
       {isDebugOpen && (
           <div className="absolute bottom-20 right-6 w-[500px] h-96 bg-slate-950/95 border border-white/10 rounded-xl z-40 flex flex-col font-mono text-xs">
-              <div className="p-2 border-b border-white/10 flex justify-between bg-slate-900/50"><span className="text-slate-300 font-bold">Logs</span><div className="flex gap-2"><button onClick={() => setDebugDance(!debugDance)} className="text-yellow-400"><Music size={14}/></button><button onClick={clearLogs} className="text-red-400">Clear</button><button onClick={() => setIsDebugOpen(false)}>X</button></div></div>
+              <div className="p-2 border-b border-white/10 flex justify-between bg-slate-900/50"><span className="text-slate-300 font-bold">Logs</span><div className="flex gap-2"><button onClick={() => setDebugDance(!debugDance)} className="text-yellow-400"><Music size={14}/></button><button onClick={resetApp} className="text-red-400">Reset App</button><button onClick={clearLogs} className="text-red-400">Clear</button><button onClick={() => setIsDebugOpen(false)}>X</button></div></div>
               <div ref={debugScrollRef} className="flex-1 overflow-y-auto p-2 space-y-1">
                   {logs.map((l, i) => (
                       <div key={i} className="text-slate-300">
