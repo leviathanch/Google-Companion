@@ -15,7 +15,12 @@
     "react-dom": "^19.2.0",
     "@react-three/drei": "^10.7.7",
     "three": "^0.181.2",
-    "@react-three/fiber": "^9.4.0"
+    "@react-three/fiber": "^9.4.0",
+    "express": "^5.1.0",
+    "axios": "^1.13.2",
+    "firebase-functions": "^7.0.0",
+    "firebase-admin": "^13.6.0",
+    "cors": "^2.8.5"
   },
   "devDependencies": {
     "@types/node": "^22.14.0",

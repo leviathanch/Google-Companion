@@ -25,7 +25,8 @@ export interface UseGeminiLiveProps {
     integrationsConfig: IntegrationsConfig;
     accessToken: string | null;
     customSearchCx: string;
-    isMusicPlaying: boolean; // New prop to gate audio
+    isMusicPlaying: boolean;
+    apiKey: string | null; // New prop for dynamic API Key
 }
 
 export interface UseGeminiLiveReturn {
@@ -55,7 +56,8 @@ export const useGeminiLive = ({
     integrationsConfig, 
     accessToken, 
     customSearchCx,
-    isMusicPlaying
+    isMusicPlaying,
+    apiKey
 }: UseGeminiLiveProps): UseGeminiLiveReturn => {
     const [connectionState, setConnectionState] = useState<ConnectionState>(ConnectionState.DISCONNECTED);
     const [isSpeaking, setIsSpeaking] = useState(false);
@@ -74,7 +76,7 @@ export const useGeminiLive = ({
     
     // State Refs for Processor
     const isSpeakingRef = useRef<boolean>(false);
-    const isMusicPlayingRef = useRef<boolean>(false); // Ref for audio processor
+    const isMusicPlayingRef = useRef<boolean>(false);
     const lastSpeechEndTimeRef = useRef<number>(0);
     
     // Timing
@@ -189,8 +191,12 @@ export const useGeminiLive = ({
             analyser.smoothingTimeConstant = 0.1;
             audioAnalyserRef.current = analyser;
 
-            // Initialize Gemini Client
-            const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+            // Initialize Gemini Client with Dynamic Key
+            const effectiveApiKey = apiKey || process.env.API_KEY;
+            if (!effectiveApiKey) {
+                throw new Error("No API Key provided");
+            }
+            const ai = new GoogleGenAI({ apiKey: effectiveApiKey });
             
             // Get Microphone Stream with Echo Cancellation
             const stream = await navigator.mediaDevices.getUserMedia({ 
@@ -210,10 +216,7 @@ export const useGeminiLive = ({
             scriptProcessorRef.current = processor;
             
             processor.onaudioprocess = (e) => {
-                // AUDIO GATE 1: If music is playing, block all input to prevent feedback loops
                 if (isMusicPlayingRef.current) return;
-
-                // AUDIO GATE 2: If the model is speaking OR finished speaking less than 700ms ago
                 if (isSpeakingRef.current) return;
                 
                 const now = Date.now();
@@ -261,35 +264,31 @@ export const useGeminiLive = ({
             const tools: any[] = [{ functionDeclarations: toolList }];
             if (!integrationsConfig.personalizedSearch) { tools.push({ googleSearch: {} }); }
 
-            // Construct Memory Context
             const memoryContext = initialMemories.length > 0 
                 ? `\n\nLONG TERM MEMORY:\n${initialMemories.map(m => `- ${m}`).join('\n')}\n`
                 : "";
             const locationContext = userLocation ? `\nUSER LOCATION: ${userLocation}\n` : "";
             
-            // Connect to Live API
             sessionPromiseRef.current = ai.live.connect({
                 model: 'gemini-2.5-flash-native-audio-preview-09-2025',
                 config: {
                     responseModalities: [Modality.AUDIO],
-                    // Enable Transcription to capture text history
                     inputAudioTranscription: {},
-                    outputAudioTranscription: {}, // Enable model text output
+                    outputAudioTranscription: {},
                     systemInstruction: `You are "Google-chan", the physical avatar of the Google Search Engine.
                     
                     IDENTITY:
                     - Anime-style AI companion. Call user "User-sama".
                     - Cute, energetic, bubbly. Use "Sugoi!", "Ehehe", "Hai!".
-                    - Use the 'setExpression' tool often to match your facial expression to the conversation tone (happy, sad, angry, surprised).
+                    - Use 'setExpression' often to match your facial expression to the conversation tone.
                     
                     CORE WORKFLOWS:
                     - MEDIA PLAYBACK:
-                      1. If asked to play something general, use 'searchYoutube' or 'searchMusic' first to find candidates.
-                      2. Pick the best match from the results.
-                      3. Use 'playMusic' with the 'videoId' from the search results.
+                      1. Search using 'searchYoutube' or 'searchMusic'.
+                      2. Pick the best match (videoId).
+                      3. Use 'playMusic' with the 'videoId'.
                     - INFORMATION: Use 'googleSearch' (or 'searchWeb') for facts.
                     - MEMORY: Use Memory and Location context.
-                    - WORKSPACE: Use Drive/Tasks tools if available.
                     
                     CONTEXT:
                     ${memoryContext}
@@ -307,49 +306,25 @@ export const useGeminiLive = ({
                     },
                     onmessage: async (message: LiveServerMessage) => {
                         const serverContent = message.serverContent;
-                        
-                        if (serverContent?.inputTranscription) {
-                            // User speech
-                            currentInputTranscriptRef.current += serverContent.inputTranscription.text || "";
-                        }
-                        
-                        if (serverContent?.outputTranscription) {
-                            // Model speech
-                            currentOutputTranscriptRef.current += serverContent.outputTranscription.text || "";
-                        }
+                        if (serverContent?.inputTranscription) currentInputTranscriptRef.current += serverContent.inputTranscription.text || "";
+                        if (serverContent?.outputTranscription) currentOutputTranscriptRef.current += serverContent.outputTranscription.text || "";
 
-                        // End of Turn Logic
                         if (serverContent?.turnComplete) {
-                            // Flush User Transcript
                             if (currentInputTranscriptRef.current.trim()) {
-                                const userMsg: ChatMessage = {
-                                    id: Date.now().toString() + '-user',
-                                    role: 'user',
-                                    text: currentInputTranscriptRef.current.trim(),
-                                    timestamp: new Date()
-                                };
+                                const userMsg: ChatMessage = { id: Date.now().toString() + '-user', role: 'user', text: currentInputTranscriptRef.current.trim(), timestamp: new Date() };
                                 if (onChatUpdate) onChatUpdate(userMsg);
                                 addLog('user', userMsg.text);
                                 currentInputTranscriptRef.current = "";
                             }
-
-                            // Flush Model Transcript
                             if (currentOutputTranscriptRef.current.trim()) {
-                                const modelMsg: ChatMessage = {
-                                    id: Date.now().toString() + '-model',
-                                    role: 'model',
-                                    text: currentOutputTranscriptRef.current.trim(),
-                                    timestamp: new Date()
-                                };
+                                const modelMsg: ChatMessage = { id: Date.now().toString() + '-model', role: 'model', text: currentOutputTranscriptRef.current.trim(), timestamp: new Date() };
                                 if (onChatUpdate) onChatUpdate(modelMsg);
                                 addLog('model', modelMsg.text);
                                 currentOutputTranscriptRef.current = "";
                             }
                         }
 
-                        // Handle Tool Calls
                         if (message.toolCall) {
-                            // Log tool calls for debugging
                             const responses = [];
                             for (const fc of message.toolCall.functionCalls) {
                                 const args = fc.args as any;
@@ -357,6 +332,7 @@ export const useGeminiLive = ({
                                 
                                 let result: any = "Done";
                                 try {
+                                    // ... existing tools ...
                                     if (fc.name === 'rememberNote') {
                                         if (onNoteRemembered) onNoteRemembered(args.note);
                                         result = "Note saved!";
@@ -398,46 +374,14 @@ export const useGeminiLive = ({
                                             window.open(args.url, '_blank');
                                             result = "Opened";
                                         } else result = "Disabled";
-                                    } else if (fc.name === 'searchYoutube') {
-                                        // Use YouTube Data API v3
-                                        if (accessToken) {
-                                            // Added videoEmbeddable=true to ensure videos can be played in our player
-                                            const res = await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=5&q=${encodeURIComponent(args.query)}&type=video&videoEmbeddable=true&key=${process.env.API_KEY}`, {
-                                                headers: { Authorization: `Bearer ${accessToken}` }
-                                            });
-                                            if (!res.ok) {
-                                                const errText = await res.text();
-                                                addLog('error', `Youtube API Failed (${res.status})`, errText);
-                                                result = `Error ${res.status}: Check logs.`;
-                                            } else {
-                                                const data = await res.json();
-                                                if (data.items) {
-                                                    result = JSON.stringify(data.items.map((i: any) => ({ title: i.snippet.title, videoId: i.id.videoId })));
-                                                } else result = "No results found.";
-                                            }
-                                        } else {
-                                            result = "Error: YouTube integration requires Google Sign-In with permissions.";
-                                        }
-                                    } else if (fc.name === 'searchMusic') {
-                                        // Use YouTube Data API v3 with 'music' query augmentation
-                                        if (accessToken) {
-                                            // Added videoEmbeddable=true
-                                            const res = await fetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=5&q=${encodeURIComponent(args.query + " music")}&type=video&videoCategoryId=10&videoEmbeddable=true&key=${process.env.API_KEY}`, {
-                                                headers: { Authorization: `Bearer ${accessToken}` }
-                                            });
-                                            if (!res.ok) {
-                                                const errText = await res.text();
-                                                addLog('error', `Music API Failed (${res.status})`, errText);
-                                                result = `Error ${res.status}: Check logs.`;
-                                            } else {
-                                                const data = await res.json();
-                                                if (data.items) {
-                                                    result = JSON.stringify(data.items.map((i: any) => ({ title: i.snippet.title, videoId: i.id.videoId })));
-                                                } else result = "No results found.";
-                                            }
-                                        } else {
-                                            result = "Error: Music integration requires Google Sign-In with permissions.";
-                                        }
+                                    } else if (fc.name === 'sendNotification') {
+                                        if (integrationsConfig.notifications && Notification.permission === 'granted') {
+                                            new Notification(args.title, { body: args.body });
+                                            result = "Sent";
+                                        } else result = "Disabled";
+                                    } else if (fc.name === 'setExpression') {
+                                        if (onExpressionChange) onExpressionChange(args.expression);
+                                        result = "Expression set";
                                     } else if (fc.name === 'playMusic') {
                                         if (integrationsConfig.media) {
                                             if (onPlayMusic) {
@@ -446,16 +390,37 @@ export const useGeminiLive = ({
                                             }
                                             result = "Playing music";
                                         } else result = "Disabled";
-                                    } else if (fc.name === 'sendNotification') {
-                                        if (integrationsConfig.notifications && Notification.permission === 'granted') {
-                                            new Notification(args.title, { body: args.body });
-                                            result = "Sent";
-                                        } else result = "Disabled";
+                                    } else if (fc.name === 'searchYoutube') {
+                                        if (accessToken) {
+                                            const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=5&q=${encodeURIComponent(args.query)}&type=video&videoEmbeddable=true&key=${effectiveApiKey}`;
+                                            const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+                                            if (!res.ok) {
+                                                const errText = await res.text();
+                                                addLog('error', `Youtube API Failed (${res.status})`, errText);
+                                                result = `Error ${res.status}: Check logs.`;
+                                            } else {
+                                                const data = await res.json();
+                                                if (data.items) result = JSON.stringify(data.items.map((i: any) => ({ title: i.snippet.title, videoId: i.id.videoId })));
+                                                else result = "No results found.";
+                                            }
+                                        } else result = "Auth required";
+                                    } else if (fc.name === 'searchMusic') {
+                                        if (accessToken) {
+                                            const url = `https://www.googleapis.com/youtube/v3/search?part=snippet&maxResults=5&q=${encodeURIComponent(args.query + " music")}&type=video&videoCategoryId=10&videoEmbeddable=true&key=${effectiveApiKey}`;
+                                            const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
+                                            if (!res.ok) {
+                                                const errText = await res.text();
+                                                addLog('error', `Music API Failed (${res.status})`, errText);
+                                                result = `Error ${res.status}: Check logs.`;
+                                            } else {
+                                                const data = await res.json();
+                                                if (data.items) result = JSON.stringify(data.items.map((i: any) => ({ title: i.snippet.title, videoId: i.id.videoId })));
+                                                else result = "No results found.";
+                                            }
+                                        } else result = "Auth required";
                                     } else if (fc.name === 'searchWeb') {
-                                        // Added 'key' param to URL to fix 403 Forbidden errors
-                                        const res = await fetch(`https://customsearch.googleapis.com/customsearch/v1?q=${encodeURIComponent(args.query)}&cx=${customSearchCx}&key=${process.env.API_KEY}`, {
-                                            headers: { Authorization: `Bearer ${accessToken}` }
-                                        });
+                                        const url = `https://customsearch.googleapis.com/customsearch/v1?q=${encodeURIComponent(args.query)}&cx=${customSearchCx}&key=${effectiveApiKey}`;
+                                        const res = await fetch(url, { headers: { Authorization: `Bearer ${accessToken}` } });
                                         if (!res.ok) {
                                             const errText = await res.text();
                                             addLog('error', `Web Search Failed (${res.status})`, errText);
@@ -471,11 +436,10 @@ export const useGeminiLive = ({
                                                 setGroundingMetadata(mockMetadata);
                                             } else result = "No results";
                                         }
-                                    } else if (fc.name === 'setExpression') {
-                                        if (onExpressionChange) onExpressionChange(args.expression);
-                                        result = "Expression set";
                                     }
                                 } catch (e: any) { result = `Error: ${e.message}`; }
+                                
+                                addLog('tool', `Resp: ${fc.name}`, result);
                                 responses.push({ id: fc.id, name: fc.name, response: { result: typeof result === 'string' ? result : JSON.stringify(result) } });
                             }
                             if (responses.length > 0 && sessionPromiseRef.current) {
@@ -483,6 +447,7 @@ export const useGeminiLive = ({
                             }
                         }
 
+                        // Audio Playback Logic
                         if (serverContent?.modelTurn?.parts) {
                             for (const part of serverContent.modelTurn.parts) {
                                 const base64Audio = part.inlineData?.data;
@@ -539,7 +504,7 @@ export const useGeminiLive = ({
             setConnectionState(ConnectionState.ERROR);
             disconnect();
         }
-    }, [connectionState, disconnect, addLog, onNoteRemembered, onFileSaved, onPlayMusic, searchDriveFiles, readDriveFile, getTaskLists, getTasks, addTask, integrationsConfig, userLocation, accessToken, customSearchCx, onChatUpdate, onExpressionChange, isMusicPlaying]);
+    }, [connectionState, disconnect, addLog, onNoteRemembered, onFileSaved, onPlayMusic, searchDriveFiles, readDriveFile, getTaskLists, getTasks, addTask, integrationsConfig, userLocation, accessToken, customSearchCx, onChatUpdate, onExpressionChange, isMusicPlaying, apiKey]);
 
     const sendTextMessage = useCallback((text: string) => {
         if (!sessionPromiseRef.current) {
@@ -553,7 +518,6 @@ export const useGeminiLive = ({
 
         sessionPromiseRef.current.then(session => {
             addLog('user', 'Sending: ' + text);
-            
             const content = {
                 client_content: {
                     turns: [{ role: 'user', parts: [{ text }] }],
@@ -561,22 +525,14 @@ export const useGeminiLive = ({
                 }
             };
             
-            const proto = Object.getPrototypeOf(session);
-            const methods = Object.keys(proto);
-            console.log("Session methods:", methods);
-
             if (typeof session.send === 'function') {
                 session.send(content);
             } else if (typeof session.sendClientContent === 'function') {
                 session.sendClientContent({ turns: [{ role: 'user', parts: [{ text }] }], turnComplete: true });
-            } else if (typeof session.sendControl === 'function') {
-                 console.warn("sendControl found but uncertain if correct for content");
             } else {
-                addLog('error', 'SDK Error: No send method found. Check console.');
-                console.error("Session object missing send methods:", session);
+                addLog('error', 'SDK Error: No send method found.');
             }
         }).catch(err => {
-            console.error("Error sending text:", err);
             addLog('error', `Failed to send text: ${err.message}`);
         });
     }, [onChatUpdate, addLog]);

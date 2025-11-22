@@ -1,6 +1,6 @@
 
 import { useState, useCallback, useEffect } from 'react';
-import { Memory, IntegrationsConfig, ChatMessage } from '../types';
+import { Memory, IntegrationsConfig, ChatMessage, NotificationItem } from '../types';
 
 export interface SearchHistoryItem {
     id: number;
@@ -11,7 +11,7 @@ export interface SearchHistoryItem {
 
 const API_URL_KEY = 'gem_api_url';
 // The deployed Firebase Function URL provided by the user
-const DEFAULT_API_URL = "https://api-foizhujlta-uc.a.run.app";
+const DEFAULT_API_URL = "https://api-ul5fvhj4oa-uc.a.run.app";
 
 export const useRemoteStorage = (accessToken: string | null) => {
     // Use localStorage value if present, otherwise fall back to the default deployed URL
@@ -124,6 +124,22 @@ export const useRemoteStorage = (accessToken: string | null) => {
         }
     }, [accessToken, apiUrl]);
 
+    const deleteSearchHistoryItem = useCallback(async (id: number) => {
+        if (!accessToken || !apiUrl) return;
+        try {
+            const res = await fetch(`${apiUrl}/search_history/${id}`, {
+                method: 'DELETE',
+                headers: { Authorization: `Bearer ${accessToken}` }
+            });
+            if (!res.ok) {
+                const text = await res.text();
+                console.error(`[API] Delete History Item Failed (${res.status}):`, text);
+            }
+        } catch (e) {
+            console.error("[API] Failed to delete search item", e);
+        }
+    }, [accessToken, apiUrl]);
+
     const clearSearchHistory = useCallback(async () => {
         if (!accessToken || !apiUrl) return;
         try {
@@ -145,14 +161,15 @@ export const useRemoteStorage = (accessToken: string | null) => {
     const fetchChatHistory = useCallback(async (): Promise<ChatMessage[] | null> => {
         if (!accessToken || !apiUrl) return null;
         try {
-            // Reusing the generic structure, assuming you implement a /chat_history endpoint on backend
-            // similar to /memories but for ChatMessage
             const res = await fetch(`${apiUrl}/chat_history`, {
                 headers: { Authorization: `Bearer ${accessToken}` }
             });
             if (!res.ok) return null;
             const data = await res.json();
-            return data.map((m: any) => ({ ...m, timestamp: new Date(m.timestamp) }));
+            // Ensure sorting by timestamp if backend limit messed it up
+            const sorted = data.map((m: any) => ({ ...m, timestamp: new Date(m.timestamp) }))
+                               .sort((a: any, b: any) => a.timestamp.getTime() - b.timestamp.getTime());
+            return sorted;
         } catch (e) {
             console.error("[API] Failed to fetch chat history", e);
             return null;
@@ -220,6 +237,37 @@ export const useRemoteStorage = (accessToken: string | null) => {
         }
     }, [accessToken, apiUrl]);
 
+    // --- NOTIFICATIONS ---
+
+    const fetchNotifications = useCallback(async (): Promise<NotificationItem[] | null> => {
+        if (!accessToken || !apiUrl) return null;
+        try {
+            // Assuming a /notifications endpoint exists on backend
+            // In a real app, you'd poll this
+            const res = await fetch(`${apiUrl}/notifications`, {
+                headers: { Authorization: `Bearer ${accessToken}` }
+            });
+            if (!res.ok) return null; // Often means endpoint not deployed yet or no notifications
+            const data = await res.json();
+            return data.map((n: any) => ({ ...n, timestamp: new Date(n.timestamp) }));
+        } catch (e) {
+            // Silent fail for polling
+            return null;
+        }
+    }, [accessToken, apiUrl]);
+
+    const markNotificationRead = useCallback(async (id: string) => {
+        if (!accessToken || !apiUrl) return;
+        try {
+            await fetch(`${apiUrl}/notifications/${id}/read`, {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${accessToken}` }
+            });
+        } catch (e) {
+            console.error("Failed to mark notification read", e);
+        }
+    }, [accessToken, apiUrl]);
+
     return {
         apiUrl,
         setApiUrl: saveApiUrl,
@@ -230,11 +278,14 @@ export const useRemoteStorage = (accessToken: string | null) => {
         deleteMemory,
         fetchSearchHistory,
         saveSearchHistoryItem,
+        deleteSearchHistoryItem,
         clearSearchHistory,
         fetchChatHistory,
         saveChatMessage,
         clearChatHistory,
         fetchConfig,
-        saveConfig
+        saveConfig,
+        fetchNotifications,
+        markNotificationRead
     };
 };

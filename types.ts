@@ -71,6 +71,14 @@ export interface MusicState {
     value: string;
 }
 
+export interface NotificationItem {
+    id: string;
+    title: string;
+    body: string;
+    timestamp: Date;
+    read: boolean;
+}
+
 declare global {
     interface Window {
         google: any;

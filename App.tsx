@@ -11,9 +11,10 @@ import { YouTubePlayer } from './components/YouTubePlayer';
 import { useGeminiLive } from './hooks/useGeminiLive';
 import { useGoogleDrive } from './hooks/useGoogleDrive';
 import { useRemoteStorage, SearchHistoryItem } from './hooks/useRemoteStorage';
-import { ConnectionState, GroundingChunk, GroundingMetadata, Memory, WorkspaceFile, IntegrationsConfig, ChatMessage, MusicState } from './types';
+import { ConnectionState, GroundingChunk, GroundingMetadata, Memory, WorkspaceFile, IntegrationsConfig, ChatMessage, MusicState, NotificationItem } from './types';
 
 const DEFAULT_CUSTOM_SEARCH_CX = "05458f6c63b8b40ac";
+const DEFAULT_GOOGLE_API_KEY = "AIzaSyAs_pJYYAUZS8wID94DA7TErwuzkKDksao";
 const GIGGLE_URL = "https://storage.googleapis.com/3d_model/audio/giggle.wav";
 
 const App = () => {
@@ -29,11 +30,14 @@ const App = () => {
   const { 
       apiUrl, setApiUrl, isApiConfigOpen, setIsApiConfigOpen,
       fetchMemories, saveMemory: saveMemoryApi, deleteMemory: deleteMemoryApi,
-      fetchSearchHistory, saveSearchHistoryItem: saveSearchApi, clearSearchHistory: clearSearchApi,
+      fetchSearchHistory, saveSearchHistoryItem: saveSearchApi, deleteSearchHistoryItem: deleteSearchApi, clearSearchHistory: clearSearchApi,
       fetchChatHistory, saveChatMessage: saveChatApi, clearChatHistory: clearChatApi,
-      fetchConfig, saveConfig: saveConfigApi
+      fetchConfig, saveConfig: saveConfigApi,
+      fetchNotifications, markNotificationRead
   } = useRemoteStorage(accessToken);
   const [tempApiUrl, setTempApiUrl] = useState("");
+  const [googleApiKey, setGoogleApiKey] = useState(localStorage.getItem('gem_google_api_key') || DEFAULT_GOOGLE_API_KEY);
+  const [tempGoogleApiKey, setTempGoogleApiKey] = useState("");
 
   // Memory
   const [memories, setMemories] = useState<Memory[]>([]);
@@ -89,6 +93,9 @@ const App = () => {
   
   // Refs for Logic
   const latestSearchQueryRef = useRef<string>("");
+
+  // Notifications
+  const notificationPollInterval = useRef<any>(null);
 
   // --- INITIALIZATION ---
   
@@ -198,6 +205,54 @@ const App = () => {
       } catch (e) {}
   }, [accessToken, apiUrl, fetchMemories, fetchSearchHistory, fetchChatHistory, fetchConfig, integrations.notifications]);
 
+  // --- NOTIFICATION POLLING ---
+  useEffect(() => {
+      if (!accessToken || !apiUrl || !integrations.notifications) {
+          if (notificationPollInterval.current) {
+              clearInterval(notificationPollInterval.current);
+              notificationPollInterval.current = null;
+          }
+          return;
+      }
+
+      const pollNotifications = async () => {
+          const notifications = await fetchNotifications();
+          if (notifications && notifications.length > 0) {
+              notifications.forEach(async (n) => {
+                  if (!n.read) {
+                      // 1. Browser Notification
+                      if (Notification.permission === 'granted') {
+                          new Notification(n.title, { body: n.body });
+                      }
+                      
+                      // 2. Inject into Chat (Give her agency)
+                      const chatMsg: ChatMessage = {
+                          id: Date.now().toString() + '-proactive',
+                          role: 'model',
+                          text: `Hey! I found something interesting: ${n.title} - ${n.body}`,
+                          timestamp: new Date()
+                      };
+                      setChatHistory(prev => [...prev, chatMsg]);
+                      if(accessToken && apiUrl) saveChatApi(chatMsg);
+                      
+                      // 3. Mark Read
+                      await markNotificationRead(n.id);
+                  }
+              });
+          }
+      };
+
+      // Poll every 60 seconds
+      notificationPollInterval.current = setInterval(pollNotifications, 60000);
+      // Initial poll
+      pollNotifications();
+
+      return () => {
+          if (notificationPollInterval.current) clearInterval(notificationPollInterval.current);
+      };
+  }, [accessToken, apiUrl, integrations.notifications, fetchNotifications, markNotificationRead, saveChatApi]);
+
+
   // --- PERSISTENCE EFFECTS ---
   useEffect(() => { localStorage.setItem('gem_long_term_memory', JSON.stringify(memories)); }, [memories]);
   useEffect(() => { localStorage.setItem('gem_search_history', JSON.stringify(searchHistory)); }, [searchHistory]);
@@ -300,6 +355,20 @@ const App = () => {
       if (accessToken && apiUrl) saveChatApi(message);
   }, [accessToken, apiUrl, saveChatApi]);
 
+  const handleDeleteSearchItem = (id: number) => {
+      setSearchHistory(prev => prev.filter(item => item.id !== id));
+      if (accessToken && apiUrl) deleteSearchApi(id);
+  };
+
+  const saveGoogleApiKey = () => {
+      if (tempGoogleApiKey) {
+          setGoogleApiKey(tempGoogleApiKey);
+          localStorage.setItem('gem_google_api_key', tempGoogleApiKey);
+          setTempGoogleApiKey("");
+          setIsApiConfigOpen(false);
+      }
+  };
+
   // --- HOOK INIT ---
   const { connect, disconnect, sendTextMessage, connectionState, isSpeaking, volume, groundingMetadata, audioAnalyser, logs, clearLogs } = useGeminiLive({
       onNoteRemembered: handleNoteRemembered,
@@ -315,7 +384,8 @@ const App = () => {
       integrationsConfig: integrations,
       accessToken: accessToken,
       customSearchCx: DEFAULT_CUSTOM_SEARCH_CX,
-      isMusicPlaying: !!musicState // Pass music state to gate mic
+      isMusicPlaying: !!musicState, // Pass music state to gate mic
+      apiKey: googleApiKey
   });
   
   const handleToggleConnection = async () => {
@@ -500,16 +570,27 @@ const App = () => {
           </div>
           <div className="flex-1 overflow-y-auto p-4 space-y-3">
               {searchHistory.map((item) => (
-                  <div key={item.id} className="bg-slate-900/60 border border-white/5 rounded-xl overflow-hidden">
+                  <div key={item.id} className="bg-slate-900/60 border border-white/5 rounded-xl overflow-hidden group relative">
                       <div className="p-3 hover:bg-white/5 cursor-pointer" onClick={() => setExpandedHistoryIds(prev => { const s = new Set(prev); s.has(item.id) ? s.delete(item.id) : s.add(item.id); return s; })}>
-                          <p className="text-sm font-semibold text-slate-200">{item.query}</p>
-                          <div className="flex justify-between mt-2 text-[10px] text-slate-500">
-                              <span>{formatTime(item.timestamp)} • {item.sources.length} Sources</span>
-                              {expandedHistoryIds.has(item.id) ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                          <div className="pr-6">
+                              <p className="text-sm font-semibold text-slate-200 truncate">{item.query}</p>
+                              <div className="flex justify-between mt-2 text-[10px] text-slate-500">
+                                  <span>{formatTime(item.timestamp)} • {item.sources.length} Sources</span>
+                                  {expandedHistoryIds.has(item.id) ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                              </div>
                           </div>
                       </div>
+                      <button onClick={(e) => { e.stopPropagation(); handleDeleteSearchItem(item.id); }} className="absolute top-3 right-3 text-slate-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"><Trash2 size={14} /></button>
                       {expandedHistoryIds.has(item.id) && (
                           <div className="bg-black/20 px-3 py-3 space-y-2 border-t border-white/5">
+                              <div className="flex items-center justify-between text-xs text-slate-300 border-b border-white/5 pb-2 mb-2">
+                                  <span className="text-slate-500">Actions</span>
+                                  <div title="Open query in Google Search" className="cursor-pointer">
+                                      <a href={`https://www.google.com/search?q=${encodeURIComponent(item.query)}`} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1 text-blue-400 hover:text-blue-300">
+                                          <ExternalLink size={12}/> Open in Google
+                                      </a>
+                                  </div>
+                              </div>
                               {item.sources.map((s, i) => (
                                   <div key={i} className="flex items-center justify-between text-xs text-slate-300">
                                       <div className="flex items-center gap-2 truncate flex-1">
@@ -518,9 +599,6 @@ const App = () => {
                                           </div>
                                       </div>
                                       <div className="flex items-center gap-2">
-                                          <div title="Open in Google">
-                                            <a href={`https://www.google.com/search?q=${encodeURIComponent(item.query)}`} target="_blank" rel="noopener noreferrer" className="text-slate-600 hover:text-blue-400"><ExternalLink size={12}/></a>
-                                          </div>
                                           <button onClick={() => handlePinItem('search', s)} title="Pin to Memory" className="text-slate-600 hover:text-pink-400"><Pin size={12} /></button>
                                       </div>
                                   </div>
@@ -579,13 +657,26 @@ const App = () => {
           />
       )}
 
-      {/* API Config & Client ID Modals (Omitted for brevity, same as before) */}
+      {/* API Config & Client ID Modals */}
       {isApiConfigOpen && (
           <div className="absolute inset-0 bg-black/80 z-[70] flex items-center justify-center p-4">
               <div className="bg-slate-900 p-6 rounded-2xl w-full max-w-md border border-white/10">
                   <h2 className="text-white font-bold mb-4">API Config</h2>
-                  <input value={tempApiUrl} onChange={e => setTempApiUrl(e.target.value)} className="w-full bg-black/50 border border-white/10 rounded p-2 text-white mb-4" placeholder="API URL" />
-                  <div className="flex justify-end gap-2"><button onClick={() => setIsApiConfigOpen(false)} className="text-slate-400 px-4">Cancel</button><button onClick={() => { if(tempApiUrl) { setApiUrl(tempApiUrl); setIsApiConfigOpen(false); }}} className="bg-blue-600 text-white px-4 py-2 rounded">Save</button></div>
+                  
+                  <label className="text-xs text-slate-400 block mb-1">Backend API URL (Firebase)</label>
+                  <input value={tempApiUrl} onChange={e => setTempApiUrl(e.target.value)} className="w-full bg-black/50 border border-white/10 rounded p-2 text-white mb-4" placeholder="https://..." />
+                  
+                  <label className="text-xs text-slate-400 block mb-1">Google API Key (Search/YouTube)</label>
+                  <input value={tempGoogleApiKey} onChange={e => setTempGoogleApiKey(e.target.value)} className="w-full bg-black/50 border border-white/10 rounded p-2 text-white mb-4" placeholder="AIza..." type="password" />
+                  
+                  <div className="flex justify-end gap-2">
+                      <button onClick={() => setIsApiConfigOpen(false)} className="text-slate-400 px-4">Cancel</button>
+                      <button onClick={() => { 
+                          if(tempApiUrl) setApiUrl(tempApiUrl); 
+                          saveGoogleApiKey();
+                          setIsApiConfigOpen(false); 
+                      }} className="bg-blue-600 text-white px-4 py-2 rounded">Save</button>
+                  </div>
               </div>
           </div>
       )}
@@ -617,7 +708,7 @@ const App = () => {
                           <button onClick={handleToggleConnection} className="bg-indigo-600 text-white font-bold py-3 px-6 rounded-full flex items-center gap-2">Start Chat</button>
                       )
                   ) : (
-                      <button onClick={handleToggleConnection} className={`w-16 h-16 rounded-full flex items-center justify-center text-white shadow-lg transition-transform hover:scale-105 ${connectionState === ConnectionState.CONNECTED ? 'bg-red-500' : 'bg-indigo-600'}`}>{connectionState === ConnectionState.CONNECTED ? <Mic size={28} /> : <MicOff size={28} />}</button>
+                      <button onClick={handleToggleConnection} className={`w-12 h-12 sm:w-16 sm:h-16 rounded-full flex items-center justify-center text-white shadow-lg transition-transform hover:scale-105 ${connectionState === ConnectionState.CONNECTED ? 'bg-red-500' : 'bg-indigo-600'}`}>{connectionState === ConnectionState.CONNECTED ? <Mic size={24} className="sm:w-7 sm:h-7" /> : <MicOff size={24} className="sm:w-7 sm:h-7" />}</button>
                   )}
                   <div className="w-12" />
               </div>
