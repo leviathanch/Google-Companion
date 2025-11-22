@@ -13,6 +13,15 @@ interface Avatar3DProps {
   onTouch?: (bodyPart: string) => void;
 }
 
+// Define Vowel Indices Structure
+interface VowelIndices {
+    a: number | null;
+    i: number | null;
+    u: number | null;
+    e: number | null;
+    o: number | null;
+}
+
 export const Avatar3D: React.FC<Avatar3DProps> = ({ isSpeaking, audioAnalyser, gesture, isDancing, onTouch }) => {
   
   // Direct Google Cloud Storage URLs
@@ -63,7 +72,8 @@ export const Avatar3D: React.FC<Avatar3DProps> = ({ isSpeaking, audioAnalyser, g
 
   // Morph Targets & Physics Refs
   const mouthMeshRef = useRef<THREE.Mesh | null>(null);
-  const morphTargetIndexRef = useRef<number | null>(null);
+  const vowelIndices = useRef<VowelIndices>({ a: null, i: null, u: null, e: null, o: null });
+  
   const blinkMeshRef = useRef<THREE.Mesh | null>(null);
   const blinkMorphIndexRef = useRef<number | null>(null);
   
@@ -83,11 +93,6 @@ export const Avatar3D: React.FC<Avatar3DProps> = ({ isSpeaking, audioAnalyser, g
     console.log("Initializing Avatar Model...");
 
     // 1. Setup Morph Targets & Materials
-    const lipSyncCandidates = [
-      'Fcl_MTH_A', 'Fcl_MTH_I', 'Fcl_MTH_U', 'Fcl_MTH_E', 'Fcl_MTH_O',
-      'A', 'aa', 'a', 'I', 'i', 'U', 'u',
-      'MouthOpen', 'mouth_a', 'v_aa', 'Mouth_Open'
-    ];
     const blinkCandidates = ['Fcl_EYE_Close', 'Fcl_EYE_Close_R', 'Blink', 'blink', 'EYE_Close', 'Fcl_EYE_Joy'];
 
     model.traverse((child) => {
@@ -115,20 +120,24 @@ export const Avatar3D: React.FC<Avatar3DProps> = ({ isSpeaking, audioAnalyser, g
       // Morphs
       if ((child as THREE.Mesh).isMesh && (child as THREE.Mesh).morphTargetDictionary) {
         const mesh = child as THREE.Mesh;
-        if (!mouthMeshRef.current) {
-            for (const name of lipSyncCandidates) {
-                if (mesh.morphTargetDictionary?.hasOwnProperty(name)) {
-                    mouthMeshRef.current = mesh;
-                    morphTargetIndexRef.current = mesh.morphTargetDictionary[name];
-                    break; 
-                }
-            }
+        const dict = mesh.morphTargetDictionary;
+
+        // Find Vowels (VRoid standard names)
+        if (dict['Fcl_MTH_A'] !== undefined || dict['aa'] !== undefined) {
+            mouthMeshRef.current = mesh;
+            vowelIndices.current.a = dict['Fcl_MTH_A'] ?? dict['aa'] ?? dict['A'] ?? null;
+            vowelIndices.current.i = dict['Fcl_MTH_I'] ?? dict['ih'] ?? dict['I'] ?? null;
+            vowelIndices.current.u = dict['Fcl_MTH_U'] ?? dict['ou'] ?? dict['U'] ?? null;
+            vowelIndices.current.e = dict['Fcl_MTH_E'] ?? dict['E'] ?? null;
+            vowelIndices.current.o = dict['Fcl_MTH_O'] ?? dict['oh'] ?? dict['O'] ?? null;
         }
+
+        // Find Blink
         if (!blinkMeshRef.current || (blinkMeshRef.current === mouthMeshRef.current)) {
              for (const name of blinkCandidates) {
-                if (mesh.morphTargetDictionary?.hasOwnProperty(name)) {
+                if (dict.hasOwnProperty(name)) {
                     blinkMeshRef.current = mesh;
-                    blinkMorphIndexRef.current = mesh.morphTargetDictionary[name];
+                    blinkMorphIndexRef.current = dict[name];
                     break;
                 }
             }
@@ -189,19 +198,68 @@ export const Avatar3D: React.FC<Avatar3DProps> = ({ isSpeaking, audioAnalyser, g
     // 1. Update Physics
     wiggleBones.current.forEach(wb => wb.update(delta));
 
-    // 2. Lip Sync
-    if (mouthMeshRef.current && morphTargetIndexRef.current !== null && audioAnalyser) {
+    // 2. Detailed Lip Sync (Formant Analysis)
+    if (mouthMeshRef.current && audioAnalyser && isSpeaking) {
       const dataArray = new Uint8Array(audioAnalyser.frequencyBinCount);
       audioAnalyser.getByteFrequencyData(dataArray);
-      const speechBins = dataArray.slice(0, dataArray.length / 2); 
-      let sum = 0;
-      for (let i = 0; i < speechBins.length; i++) sum += speechBins[i];
-      const targetOpenness = Math.min(1, (sum / speechBins.length / 100) * 1.5);
-      const currentOpenness = mouthMeshRef.current.morphTargetInfluences![morphTargetIndexRef.current];
-      mouthMeshRef.current.morphTargetInfluences![morphTargetIndexRef.current] = THREE.MathUtils.lerp(currentOpenness, targetOpenness, 0.3);
-    } else if (mouthMeshRef.current && morphTargetIndexRef.current !== null && !isSpeaking) {
-       const currentOpenness = mouthMeshRef.current.morphTargetInfluences![morphTargetIndexRef.current];
-       mouthMeshRef.current.morphTargetInfluences![morphTargetIndexRef.current] = THREE.MathUtils.lerp(currentOpenness, 0, 0.2);
+      
+      // Calculate energy in different frequency bands
+      const binCount = dataArray.length;
+      const lowEnd = Math.floor(binCount * 0.1); // Bass/Vowels like U/O
+      const midEnd = Math.floor(binCount * 0.4); // Mids/Vowels like A
+      const highEnd = binCount; // Treble/Vowels like I/E
+
+      let sumLow = 0, sumMid = 0, sumHigh = 0;
+      for(let i=0; i<lowEnd; i++) sumLow += dataArray[i];
+      for(let i=lowEnd; i<midEnd; i++) sumMid += dataArray[i];
+      for(let i=midEnd; i<highEnd; i++) sumHigh += dataArray[i];
+
+      const volLow = (sumLow / lowEnd) / 255;
+      const volMid = (sumMid / (midEnd - lowEnd)) / 255;
+      const volHigh = (sumHigh / (highEnd - midEnd)) / 255;
+      const totalVol = Math.min(1, (volLow + volMid + volHigh) / 1.5);
+
+      // Map to Vowels (Heuristic)
+      // A: High Volume, Balanced
+      // I: High Treble
+      // U: High Bass, Low Treble
+      // E: Mid Range
+      // O: High Bass, Mid Range
+
+      let targetA = totalVol * 1.2; 
+      let targetI = volHigh * 1.5 - volLow * 0.5;
+      let targetU = volLow * 1.5 - volHigh * 0.5;
+      let targetE = volMid * 1.2;
+      let targetO = (volLow + volMid) * 0.8;
+
+      // Clamp
+      const clamp = (v: number) => Math.max(0, Math.min(1, v));
+      targetA = clamp(targetA);
+      targetI = clamp(targetI);
+      targetU = clamp(targetU);
+      targetE = clamp(targetE);
+      targetO = clamp(targetO);
+
+      const indices = vowelIndices.current;
+      const influences = mouthMeshRef.current.morphTargetInfluences!;
+      const lerpFactor = 0.4;
+
+      if (indices.a !== null) influences[indices.a] = THREE.MathUtils.lerp(influences[indices.a], targetA, lerpFactor);
+      if (indices.i !== null) influences[indices.i] = THREE.MathUtils.lerp(influences[indices.i], targetI, lerpFactor);
+      if (indices.u !== null) influences[indices.u] = THREE.MathUtils.lerp(influences[indices.u], targetU, lerpFactor);
+      if (indices.e !== null) influences[indices.e] = THREE.MathUtils.lerp(influences[indices.e], targetE, lerpFactor);
+      if (indices.o !== null) influences[indices.o] = THREE.MathUtils.lerp(influences[indices.o], targetO, lerpFactor);
+
+    } else if (mouthMeshRef.current && !isSpeaking) {
+       // Close mouth smoothly
+       const indices = vowelIndices.current;
+       const influences = mouthMeshRef.current.morphTargetInfluences!;
+       const lerpFactor = 0.2;
+       if (indices.a !== null) influences[indices.a] = THREE.MathUtils.lerp(influences[indices.a], 0, lerpFactor);
+       if (indices.i !== null) influences[indices.i] = THREE.MathUtils.lerp(influences[indices.i], 0, lerpFactor);
+       if (indices.u !== null) influences[indices.u] = THREE.MathUtils.lerp(influences[indices.u], 0, lerpFactor);
+       if (indices.e !== null) influences[indices.e] = THREE.MathUtils.lerp(influences[indices.e], 0, lerpFactor);
+       if (indices.o !== null) influences[indices.o] = THREE.MathUtils.lerp(influences[indices.o], 0, lerpFactor);
     }
 
     // 3. Blink

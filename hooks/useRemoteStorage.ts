@@ -1,6 +1,6 @@
 
 import { useState, useCallback, useEffect } from 'react';
-import { Memory, IntegrationsConfig } from '../types';
+import { Memory, IntegrationsConfig, ChatMessage } from '../types';
 
 export interface SearchHistoryItem {
     id: number;
@@ -140,6 +140,54 @@ export const useRemoteStorage = (accessToken: string | null) => {
         }
     }, [accessToken, apiUrl]);
 
+    // --- CHAT HISTORY ---
+
+    const fetchChatHistory = useCallback(async (): Promise<ChatMessage[] | null> => {
+        if (!accessToken || !apiUrl) return null;
+        try {
+            // Reusing the generic structure, assuming you implement a /chat_history endpoint on backend
+            // similar to /memories but for ChatMessage
+            const res = await fetch(`${apiUrl}/chat_history`, {
+                headers: { Authorization: `Bearer ${accessToken}` }
+            });
+            if (!res.ok) return null;
+            const data = await res.json();
+            return data.map((m: any) => ({ ...m, timestamp: new Date(m.timestamp) }));
+        } catch (e) {
+            console.error("[API] Failed to fetch chat history", e);
+            return null;
+        }
+    }, [accessToken, apiUrl]);
+
+    const saveChatMessage = useCallback(async (message: ChatMessage) => {
+        if (!accessToken || !apiUrl) return;
+        try {
+            await fetch(`${apiUrl}/chat_history`, {
+                method: 'POST',
+                headers: { 
+                    'Authorization': `Bearer ${accessToken}`,
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify(message)
+            });
+        } catch (e) {
+            console.error("[API] Failed to save chat message", e);
+        }
+    }, [accessToken, apiUrl]);
+
+    const clearChatHistory = useCallback(async () => {
+        if (!accessToken || !apiUrl) return;
+        try {
+            await fetch(`${apiUrl}/chat_history`, {
+                method: 'DELETE',
+                headers: { Authorization: `Bearer ${accessToken}` }
+            });
+        } catch (e) {
+            console.error("[API] Failed to clear chat history", e);
+        }
+    }, [accessToken, apiUrl]);
+
+
     // --- SETTINGS CONFIGURATION ---
 
     const fetchConfig = useCallback(async (): Promise<IntegrationsConfig | null> => {
@@ -183,6 +231,9 @@ export const useRemoteStorage = (accessToken: string | null) => {
         fetchSearchHistory,
         saveSearchHistoryItem,
         clearSearchHistory,
+        fetchChatHistory,
+        saveChatMessage,
+        clearChatHistory,
         fetchConfig,
         saveConfig
     };

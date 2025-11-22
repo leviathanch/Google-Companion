@@ -59,6 +59,13 @@ export interface IntegrationsConfig {
     personalizedSearch: boolean; // Custom Search API
 }
 
+export interface ChatMessage {
+    id: string;
+    role: 'user' | 'model';
+    text: string;
+    timestamp: Date;
+}
+
 declare global {
     interface Window {
         google: any;
