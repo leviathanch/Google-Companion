@@ -208,6 +208,10 @@ const App = () => {
 
   const handleExpressionChange = useCallback((expression: string) => {
       setCurrentExpression(expression);
+      if (expression !== 'neutral') {
+          // Auto-reset expression after 1 second (as requested)
+          setTimeout(() => setCurrentExpression('neutral'), 1000);
+      }
   }, []);
 
   const handleAvatarTouch = useCallback((bodyPart: string) => {
@@ -304,7 +308,8 @@ const App = () => {
       addTask: addTask,
       integrationsConfig: integrations,
       accessToken: accessToken,
-      customSearchCx: DEFAULT_CUSTOM_SEARCH_CX
+      customSearchCx: DEFAULT_CUSTOM_SEARCH_CX,
+      isMusicPlaying: !!musicTrack // Pass music state to gate mic
   });
   
   const handleToggleConnection = async () => {
@@ -502,7 +507,9 @@ const App = () => {
                               {item.sources.map((s, i) => (
                                   <div key={i} className="flex items-center justify-between text-xs text-slate-300">
                                       <div className="flex items-center gap-2 truncate flex-1">
-                                          <a href={s.uri} target="_blank" rel="noopener noreferrer" className="truncate hover:text-indigo-400 flex-1">{s.title}</a>
+                                          <div title={s.title} className="truncate hover:text-indigo-400 flex-1">
+                                              <a href={s.uri} target="_blank" rel="noopener noreferrer" className="truncate hover:text-indigo-400 flex-1">{s.title}</a>
+                                          </div>
                                       </div>
                                       <div className="flex items-center gap-2">
                                           <a href={`https://www.google.com/search?q=${encodeURIComponent(item.query)}`} target="_blank" rel="noopener noreferrer" title="Open in Google" className="text-slate-600 hover:text-blue-400"><ExternalLink size={12}/></a>

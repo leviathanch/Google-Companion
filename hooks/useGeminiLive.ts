@@ -25,6 +25,7 @@ export interface UseGeminiLiveProps {
     integrationsConfig: IntegrationsConfig;
     accessToken: string | null;
     customSearchCx: string;
+    isMusicPlaying: boolean; // New prop to gate audio
 }
 
 export interface UseGeminiLiveReturn {
@@ -53,7 +54,8 @@ export const useGeminiLive = ({
     addTask,
     integrationsConfig, 
     accessToken, 
-    customSearchCx 
+    customSearchCx,
+    isMusicPlaying
 }: UseGeminiLiveProps): UseGeminiLiveReturn => {
     const [connectionState, setConnectionState] = useState<ConnectionState>(ConnectionState.DISCONNECTED);
     const [isSpeaking, setIsSpeaking] = useState(false);
@@ -70,6 +72,11 @@ export const useGeminiLive = ({
     const activeSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
     const audioAnalyserRef = useRef<AnalyserNode | null>(null);
     
+    // State Refs for Processor
+    const isSpeakingRef = useRef<boolean>(false);
+    const isMusicPlayingRef = useRef<boolean>(false); // Ref for audio processor
+    const lastSpeechEndTimeRef = useRef<number>(0);
+    
     // Timing
     const nextStartTimeRef = useRef<number>(0);
     
@@ -83,6 +90,15 @@ export const useGeminiLive = ({
     
     // References to dynamic data
     const filesRef = useRef<WorkspaceFile[]>([]);
+
+    // Sync refs
+    useEffect(() => {
+        isSpeakingRef.current = isSpeaking;
+    }, [isSpeaking]);
+
+    useEffect(() => {
+        isMusicPlayingRef.current = isMusicPlaying;
+    }, [isMusicPlaying]);
 
     // Get Location on Init
     useEffect(() => {
@@ -194,6 +210,15 @@ export const useGeminiLive = ({
             scriptProcessorRef.current = processor;
             
             processor.onaudioprocess = (e) => {
+                // AUDIO GATE 1: If music is playing, block all input to prevent feedback loops
+                if (isMusicPlayingRef.current) return;
+
+                // AUDIO GATE 2: If the model is speaking OR finished speaking less than 700ms ago
+                if (isSpeakingRef.current) return;
+                
+                const now = Date.now();
+                if (now - lastSpeechEndTimeRef.current < 700) return;
+
                 const inputData = e.inputBuffer.getChannelData(0);
                 const pcmBlob = createPcmBlob(inputData);
                 
@@ -374,7 +399,6 @@ export const useGeminiLive = ({
                                             result = "Opened";
                                         } else result = "Disabled";
                                     } else if (fc.name === 'searchYoutube') {
-                                        // Use Custom Search if available to get real results
                                         if (integrationsConfig.personalizedSearch && accessToken && customSearchCx) {
                                             const res = await fetch(`https://customsearch.googleapis.com/customsearch/v1?q=${encodeURIComponent(args.query + " site:youtube.com")}&cx=${customSearchCx}`, {
                                                 headers: { Authorization: `Bearer ${accessToken}` }
@@ -384,7 +408,6 @@ export const useGeminiLive = ({
                                                 result = JSON.stringify(data.items.slice(0, 5).map((i: any) => ({ title: i.title, link: i.link })));
                                             } else result = "No results found via Custom Search.";
                                         } else {
-                                            // Fallback if personalized search is off
                                             result = `Found video: https://www.youtube.com/results?search_query=${encodeURIComponent(args.query)}`;
                                         }
                                     } else if (fc.name === 'searchMusic') {
@@ -456,7 +479,10 @@ export const useGeminiLive = ({
                                     activeSourcesRef.current.add(source);
                                     source.onended = () => {
                                         activeSourcesRef.current.delete(source);
-                                        if (activeSourcesRef.current.size === 0) setIsSpeaking(false);
+                                        if (activeSourcesRef.current.size === 0) {
+                                            setIsSpeaking(false);
+                                            lastSpeechEndTimeRef.current = Date.now();
+                                        }
                                     };
                                     setIsSpeaking(true);
                                 }
@@ -487,7 +513,7 @@ export const useGeminiLive = ({
             setConnectionState(ConnectionState.ERROR);
             disconnect();
         }
-    }, [connectionState, disconnect, addLog, onNoteRemembered, onFileSaved, onPlayMusic, searchDriveFiles, readDriveFile, getTaskLists, getTasks, addTask, integrationsConfig, userLocation, accessToken, customSearchCx, onChatUpdate, onExpressionChange]);
+    }, [connectionState, disconnect, addLog, onNoteRemembered, onFileSaved, onPlayMusic, searchDriveFiles, readDriveFile, getTaskLists, getTasks, addTask, integrationsConfig, userLocation, accessToken, customSearchCx, onChatUpdate, onExpressionChange, isMusicPlaying]);
 
     const sendTextMessage = useCallback((text: string) => {
         if (!sessionPromiseRef.current) {
@@ -502,7 +528,6 @@ export const useGeminiLive = ({
         sessionPromiseRef.current.then(session => {
             addLog('user', 'Sending: ' + text);
             
-            // Try snake_case first (Protocol format)
             const content = {
                 client_content: {
                     turns: [{ role: 'user', parts: [{ text }] }],
@@ -510,7 +535,6 @@ export const useGeminiLive = ({
                 }
             };
             
-            // Inspect available methods
             const proto = Object.getPrototypeOf(session);
             const methods = Object.keys(proto);
             console.log("Session methods:", methods);
@@ -520,7 +544,6 @@ export const useGeminiLive = ({
             } else if (typeof session.sendClientContent === 'function') {
                 session.sendClientContent({ turns: [{ role: 'user', parts: [{ text }] }], turnComplete: true });
             } else if (typeof session.sendControl === 'function') {
-                 // Some SDK versions might use this? unlikely but checking
                  console.warn("sendControl found but uncertain if correct for content");
             } else {
                 addLog('error', 'SDK Error: No send method found. Check console.');

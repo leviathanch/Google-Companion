@@ -154,12 +154,12 @@ export const Avatar3D: React.FC<Avatar3DProps> = ({ isSpeaking, audioAnalyser, g
         // Find Expressions (Eye/Brow Morphs preference)
         // We look for 'Fcl_EYE_...' or 'Fcl_BRW_...' mostly to avoid locking mouth
         if (dict['Fcl_EYE_Joy'] !== undefined) {
-            faceMeshRef.current = mesh;
-            expressionIndices.current['joy'] = dict['Fcl_EYE_Joy'];
-            expressionIndices.current['sorrow'] = dict['Fcl_EYE_Sorrow'];
-            expressionIndices.current['angry'] = dict['Fcl_EYE_Angry'];
-            expressionIndices.current['fun'] = dict['Fcl_EYE_Fun'];
-            expressionIndices.current['surprised'] = dict['Fcl_EYE_Surprised'];
+          faceMeshRef.current = mesh;
+          expressionIndices.current['joy'] = dict['Fcl_EYE_Joy'];
+          expressionIndices.current['sorrow'] = dict['Fcl_EYE_Sorrow'];
+          expressionIndices.current['angry'] = dict['Fcl_EYE_Angry'];
+          expressionIndices.current['fun'] = dict['Fcl_EYE_Fun'];
+          expressionIndices.current['surprised'] = dict['Fcl_EYE_Surprised'];
         }
       }
     });
@@ -191,14 +191,18 @@ export const Avatar3D: React.FC<Avatar3DProps> = ({ isSpeaking, audioAnalyser, g
           bone.name == 'J_Sec_Hair3_06' ||
           bone.name == 'J_Sec_Hair3_07' ||
           bone.name == 'J_Sec_Hair4_03' ||
-          bone.name == 'J_Sec_Hair4_07'
-
+          bone.name == 'J_Sec_Hair4_07' ||
+          bone.name == 'J_Sec_L_SkirtFront_01' ||
+          bone.name == 'J_Sec_R_SkirtFront_01' ||
+          bone.name == 'J_Sec_L_SkirtBack_01' ||
+          bone.name == 'J_Sec_R_SkirtBack_01' ||
+          bone.name == 'J_Sec_L_SkirtSide_01' ||
+          bone.name == 'J_Sec_R_SkirtSide_01'
         ) {
           bonesToWiggle.push(bone);
         }
       }
     });
-
 
     // 3. Initialize Wiggle Bones (Modifies Scene Graph)
     const newWiggleBones: WiggleBone[] = [];
@@ -254,12 +258,12 @@ export const Avatar3D: React.FC<Avatar3DProps> = ({ isSpeaking, audioAnalyser, g
       const volHigh = (sumHigh / (highEnd - midEnd)) / 255;
       const totalVol = Math.min(1, (volLow + volMid + volHigh) / 1.5);
 
-      // Map to Vowels (Heuristic) - Tuned DOWN intensity (0.6 multiplier)
-      let targetA = totalVol * 0.6;
-      let targetI = (volHigh * 1.5 - volLow * 0.5) * 0.6;
-      let targetU = (volLow * 1.5 - volHigh * 0.5) * 0.6;
-      let targetE = (volMid * 1.2) * 0.6;
-      let targetO = ((volLow + volMid) * 0.8) * 0.6;
+      // Map to Vowels (Heuristic) - Tuned DOWN intensity (0.4 multiplier)
+      let targetA = totalVol * 0.4;
+      let targetI = (volHigh * 1.5 - volLow * 0.5) * 0.4;
+      let targetU = (volLow * 1.5 - volHigh * 0.5) * 0.4;
+      let targetE = (volMid * 1.2) * 0.4;
+      let targetO = ((volLow + volMid) * 0.8) * 0.4;
 
       // Clamp
       const clamp = (v: number) => Math.max(0, Math.min(1, v));
@@ -293,29 +297,29 @@ export const Avatar3D: React.FC<Avatar3DProps> = ({ isSpeaking, audioAnalyser, g
 
     // 3. Facial Expressions
     if (faceMeshRef.current) {
-       const influences = faceMeshRef.current.morphTargetInfluences!;
-       const indices = expressionIndices.current;
-       const lerpFactor = 0.1; // Smooth transition
+      const influences = faceMeshRef.current.morphTargetInfluences!;
+      const indices = expressionIndices.current;
+      const lerpFactor = 0.1; // Smooth transition
 
-       // Map props to VRoid Morph Targets
-       // neutral = all 0
-       // happy = Joy + Fun
-       // sad = Sorrow
-       // angry = Angry
-       // surprised = Surprised
+      // Map props to VRoid Morph Targets
+      // neutral = all 0
+      // happy = Joy + Fun
+      // sad = Sorrow
+      // angry = Angry
+      // surprised = Surprised
 
-       let targetJoy = 0, targetSorrow = 0, targetAngry = 0, targetFun = 0, targetSurprised = 0;
+      let targetJoy = 0, targetSorrow = 0, targetAngry = 0, targetFun = 0, targetSurprised = 0;
 
-       if (expression === 'happy') { targetJoy = 0.8; targetFun = 0.3; }
-       else if (expression === 'sad') { targetSorrow = 0.8; }
-       else if (expression === 'angry') { targetAngry = 0.8; }
-       else if (expression === 'surprised') { targetSurprised = 0.8; }
+      if (expression === 'happy') { targetJoy = 0.8; targetFun = 0.3; }
+      else if (expression === 'sad') { targetSorrow = 0.8; }
+      else if (expression === 'angry') { targetAngry = 0.8; }
+      else if (expression === 'surprised') { targetSurprised = 0.8; }
 
-       if (indices['joy'] !== undefined) influences[indices['joy']] = THREE.MathUtils.lerp(influences[indices['joy']], targetJoy, lerpFactor);
-       if (indices['sorrow'] !== undefined) influences[indices['sorrow']] = THREE.MathUtils.lerp(influences[indices['sorrow']], targetSorrow, lerpFactor);
-       if (indices['angry'] !== undefined) influences[indices['angry']] = THREE.MathUtils.lerp(influences[indices['angry']], targetAngry, lerpFactor);
-       if (indices['fun'] !== undefined) influences[indices['fun']] = THREE.MathUtils.lerp(influences[indices['fun']], targetFun, lerpFactor);
-       if (indices['surprised'] !== undefined) influences[indices['surprised']] = THREE.MathUtils.lerp(influences[indices['surprised']], targetSurprised, lerpFactor);
+      if (indices['joy'] !== undefined) influences[indices['joy']] = THREE.MathUtils.lerp(influences[indices['joy']], targetJoy, lerpFactor);
+      if (indices['sorrow'] !== undefined) influences[indices['sorrow']] = THREE.MathUtils.lerp(influences[indices['sorrow']], targetSorrow, lerpFactor);
+      if (indices['angry'] !== undefined) influences[indices['angry']] = THREE.MathUtils.lerp(influences[indices['angry']], targetAngry, lerpFactor);
+      if (indices['fun'] !== undefined) influences[indices['fun']] = THREE.MathUtils.lerp(influences[indices['fun']], targetFun, lerpFactor);
+      if (indices['surprised'] !== undefined) influences[indices['surprised']] = THREE.MathUtils.lerp(influences[indices['surprised']], targetSurprised, lerpFactor);
     }
 
     // 4. Blink (Override Expressions slightly)
@@ -334,6 +338,9 @@ export const Avatar3D: React.FC<Avatar3DProps> = ({ isSpeaking, audioAnalyser, g
           // Only close up to 70% to look natural
           blinkMeshRef.current.morphTargetInfluences![blinkMorphIndexRef.current] = Math.sin(progress * Math.PI) * 0.7;
         }
+      } else {
+        // Force eyes open when not blinking to prevent sticking
+        blinkMeshRef.current.morphTargetInfluences![blinkMorphIndexRef.current] = 0;
       }
     }
   });
